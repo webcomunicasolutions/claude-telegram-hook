@@ -1,147 +1,166 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Bash](https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnu-bash&logoColor=white)](https://www.gnu.org/software/bash/)
+[![Bash](https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnu-bash&logoColor=white)](#)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram-Bot%20API-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots/api)
+[![Claude Code](https://img.shields.io/badge/Claude-Code-cc785c?logo=anthropic&logoColor=white)](https://docs.anthropic.com/en/docs/claude-code)
+[![Setup Time](https://img.shields.io/badge/Setup-3%20minutes-brightgreen)](#setup-in-3-minutes)
 
 # claude-telegram-hook
 
-**Approve or deny Claude Code permissions from your phone via Telegram.**
+**Control Claude Code from your phone. Walk away from the terminal.**
 
-A Bash hook for [Claude Code](https://claude.ai/code) (Anthropic's official CLI) that replaces the terminal permission dialog with Telegram inline buttons. When Claude Code needs your approval to run a command, edit a file, or perform any action that requires permission, it sends a message to your Telegram with Allow/Deny buttons and waits for your response.
-
----
-
-## The Problem
-
-When Claude Code needs permission to execute an action -- running a shell command, writing a file, making a web request -- it pauses and displays a confirmation dialog in the terminal. You have to be physically watching the terminal to respond.
-
-This creates friction when:
-
-- You step away from your desk while Claude Code works on a long task
-- You are working in another application and miss the prompt
-- You have multiple Claude Code sessions running and cannot monitor all of them
-- You want to let Claude Code work autonomously while you review permissions from anywhere
-
-## The Solution
-
-**claude-telegram-hook** intercepts every permission request and routes it to your Telegram chat. You receive a notification on your phone with full context about what Claude Code wants to do, tap a button to allow or deny, and Claude Code continues immediately. No terminal watching required.
+> [English] | [Espanol](README_ES.md)
 
 ---
 
-## How It Works (Flow)
+## Why?
+
+Claude Code is incredible -- until it asks for permission. Every shell command, every file write, every tool call pauses and waits for you to type `y` in the terminal. You're stuck staring at a blinking cursor while your coffee gets cold.
+
+**claude-telegram-hook fixes that.** Permission requests go to your phone. You tap a button. Claude keeps working. You keep living.
+
+### Before
 
 ```
-+-------------------+       +-------------------------+       +-------------------+
-|                   |       |                         |       |                   |
-|   Claude Code     |       |   hook_permission_      |       |   Telegram        |
-|                   |       |   telegram.sh           |       |   Bot API         |
-|   Wants to run:   |       |                         |       |                   |
-|   "git push"      +------>+  1. Reads JSON stdin    +------>+  sendMessage      |
-|                   | stdin |  2. Builds message      | HTTPS |  with inline      |
-|                   |       |  3. Sends to Telegram   |       |  keyboard         |
-|                   |       |                         |       |                   |
-|                   |       |                         |       +--------+----------+
-|                   |       |                         |                |
-|                   |       |                         |                v
-|                   |       |                         |
-|                   |       |                         |       +-------------------+
-|                   |       |                         |       |                   |
-|                   |       |                         |       |   Your Phone      |
-|                   |       |                         |       |                   |
-|                   |       |                         |       |   "Claude Code    |
-|                   |       |                         |       |    needs perm."   |
-|                   |       |                         |       |                   |
-|                   |       |                         |       |  [Allow] [Deny]   |
-|                   |       |                         |       |                   |
-|                   |       |                         |       +--------+----------+
-|                   |       |                         |                |
-|                   |       |                         |                v
-|                   |       |                         |       +-------------------+
-|                   |       |                         |       |                   |
-|   Receives        |       |  4. Polls getUpdates   |       |   Telegram        |
-|   decision:       +<------+  5. Parses response    +<------+   Bot API         |
-|   allow / deny    | stdout|  6. Returns JSON       | HTTPS |   (callback)      |
-|                   |       |                         |       |                   |
-|   (continues or   |       |                         |       |                   |
-|    stops action)  |       |                         |       |                   |
-+-------------------+       +-------------------------+       +-------------------+
+You: Refactor the auth module and run the tests.
+
+Claude: I need to run `npm test`. Allow? [y/n]
+You: *watching terminal* ... y
+
+Claude: I need to write src/auth.ts. Allow? [y/n]
+You: *still watching* ... y
+
+Claude: I need to run `git diff`. Allow? [y/n]
+You: *20 minutes later, still here* ... y
 ```
 
+### After
+
+```
+You: Refactor the auth module and run the tests.
+
+*You walk away. Make coffee. Pet the dog.*
+
+Phone buzzes:
+  "Claude wants to run: npm test"
+  [ Allow ]  [ Deny ]
+*Tap Allow from the couch.*
+
+Phone buzzes:
+  "Claude wants to write: src/auth.ts"
+  [ Allow ]  [ Deny ]
+*Tap Allow while sipping coffee.*
+```
+
+Claude Code keeps working. You keep living.
+
 ---
 
-## Features
+## What You Need
 
-- **Inline keyboard buttons** -- tap Allow or Deny directly in Telegram, no typing required
-- **Text fallback** -- also accepts typed responses ("yes", "no", "si", "ok", "cancel", etc.)
-- **Bilingual support** -- recognizes approval/denial in both English and Spanish
-- **HTML escaping** -- safely renders commands and file paths in Telegram messages without breaking HTML parse mode
-- **Security validation** -- only accepts responses from your authorized Chat ID; ignores messages from other users
-- **Configurable timeout** -- auto-denies after a configurable period (default: 120 seconds) so Claude Code is never stuck waiting indefinitely
-- **Fallback policy** -- configurable behavior (allow or deny) when the hook encounters an error (network failure, missing dependencies, etc.)
-- **Structured logging** -- all hook activity is logged to a file for debugging and auditing
-- **Tool-aware messages** -- formats the permission request differently for Bash commands, file writes, file edits, web fetches, and web searches, showing the most relevant details for each
-- **Callback acknowledgment** -- responds to Telegram callback queries so buttons show immediate feedback
+That's the beauty of this project: almost nothing.
+
+| # | Requirement | Details |
+|---|---|---|
+| 1 | **A Telegram account** | The app you already have on your phone |
+| 2 | **A Telegram bot token** | Created in 30 seconds via @BotFather -- free, instant, no approval |
+| 3 | **Your Telegram user ID** | A number you grab once (we'll show you how) |
+| 4 | **curl** | Already installed on macOS and virtually every Linux |
+| 5 | **jq** | One command to install: `apt install jq` or `brew install jq` |
+
+**That's the whole list.** No servers to run. No databases. No Docker. No cloud accounts. No paid API keys. Telegram's Bot API is free with zero meaningful rate limits for this use case.
+
+The entire hook is **a single Bash script** that talks to Telegram using `curl`. That's it.
 
 ---
 
-## Prerequisites
+## Setup in 3 Minutes
 
-| Requirement | Purpose |
-|-------------|---------|
-| [curl](https://curl.se/) | HTTP requests to the Telegram Bot API |
-| [jq](https://jqlang.github.io/jq/) | JSON parsing for hook input/output and API responses |
-| A Telegram bot | Created via [@BotFather](https://t.me/BotFather) (see [instructions below](#how-to-create-a-telegram-bot)) |
-| [Claude Code](https://claude.ai/code) | Anthropic's CLI with hook support |
+### Phase 1: Create Your Telegram Bot (30 seconds)
 
-Most Linux distributions and macOS include `curl` by default. To install `jq`:
+Open Telegram on your phone or desktop and search for **[@BotFather](https://t.me/BotFather)** -- Telegram's official tool for creating bots.
+
+**Step 1** -- Start a chat with BotFather and send:
+
+```
+/newbot
+```
+
+**Step 2** -- BotFather replies: *"Alright, a new bot. How are we going to call it? Please choose a name for your bot."*
+
+Type a friendly name:
+
+```
+Claude Code Approver
+```
+
+**Step 3** -- BotFather replies: *"Good. Now let's choose a username for your bot. It must end in `bot`."*
+
+Pick a unique username:
+
+```
+my_claude_approver_bot
+```
+
+**Step 4** -- BotFather responds with your token:
+
+```
+Done! Congratulations on your new bot. You can now add a description,
+about section and profile picture for your bot.
+
+Use this token to access the HTTP API:
+7012345678:AAH1bmFnZ2luZy1hLWJvdC10b2tlbi1oZXJl
+
+Keep your token secure and store it safely, it can be used by anyone
+to control your bot.
+```
+
+> Copy that long string. That is your **`TELEGRAM_BOT_TOKEN`**.
+
+**Step 5** -- Now get your user ID. Search for **[@userinfobot](https://t.me/userinfobot)** on Telegram and send it any message. It replies instantly:
+
+```
+Your user ID: 123456789
+```
+
+> That number is your **`TELEGRAM_CHAT_ID`**.
+
+**Step 6** -- One last thing: open a chat with **your new bot** and send `/start`. This is required -- bots cannot message you until you initiate contact.
+
+Done. You now have the only two credentials you need.
+
+---
+
+### Phase 2: Install the Hook (60 seconds)
 
 ```bash
-# Debian / Ubuntu / WSL
-sudo apt-get install -y jq
-
-# macOS
-brew install jq
-
-# Verify
-jq --version
-```
-
----
-
-## Quick Install
-
-### 1. Clone the repository
-
-```bash
+# Clone the repository
 git clone https://github.com/webcomunicasolutions/claude-telegram-hook.git
 cd claude-telegram-hook
-```
 
-### 2. Copy the hook script to your Claude Code hooks directory
-
-```bash
+# Copy the hook to Claude Code's hooks directory
 mkdir -p ~/.claude/hooks
 cp hook_permission_telegram.sh ~/.claude/hooks/
 chmod +x ~/.claude/hooks/hook_permission_telegram.sh
 ```
 
-### 3. Set your environment variables
-
-Add these to your shell profile (`~/.bashrc`, `~/.zshrc`, or equivalent):
+Now set your credentials. Add these two lines to your `~/.bashrc`, `~/.zshrc`, or `~/.profile`:
 
 ```bash
-export TELEGRAM_BOT_TOKEN="your-bot-token-here"
-export TELEGRAM_CHAT_ID="your-chat-id-here"
+export TELEGRAM_BOT_TOKEN="7012345678:AAH1bmFnZ2luZy1hLWJvdC10b2tlbi1oZXJl"
+export TELEGRAM_CHAT_ID="123456789"
 ```
 
-Then reload your shell:
+Reload your shell:
 
 ```bash
-source ~/.bashrc   # or source ~/.zshrc
+source ~/.bashrc  # or ~/.zshrc
 ```
 
-### 4. Configure the hook in Claude Code
+---
 
-Add the following to your `~/.claude/settings.json` file. If the file already exists, merge the `hooks` section into your existing configuration:
+### Phase 3: Configure Claude Code (30 seconds)
+
+Open (or create) `~/.claude/settings.json` and add the hook:
 
 ```json
 {
@@ -162,192 +181,182 @@ Add the following to your `~/.claude/settings.json` file. If the file already ex
 }
 ```
 
-**About the matcher:** Setting `"matcher": ""` (empty string) means the hook triggers for all tool permission requests. You can restrict it to specific tools (e.g., `"Bash"`, `"Write"`) if you only want Telegram approval for certain actions.
+> **Tip:** The `"matcher": ""` means the hook triggers for all permission requests. You can set it to `"Bash"` to only get Telegram prompts for shell commands, for example.
+>
+> **About PermissionRequest:** This hook uses the `PermissionRequest` event, which fires only when Claude Code would show you a permission dialog. This means it won't bother you for tools that are already auto-approved in your permissions.
 
-**About the timeout:** The `timeout` value (130 seconds) should be slightly higher than the `TELEGRAM_PERMISSION_TIMEOUT` (default 120 seconds) to give the script time to handle the timeout gracefully before Claude Code kills it.
+**That's it. You're done.** Start Claude Code and ask it to do something that needs permission. Your phone will buzz.
 
-### 5. Allow Telegram API access in the sandbox
+---
 
-If you use Claude Code's network sandbox, add `api.telegram.org` to the allowed domains in your `~/.claude/settings.json`:
+## How It Works
 
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(command:bash ~/.claude/hooks/hook_permission_telegram.sh)"
-    ]
-  },
-  "network": {
-    "allowedDomains": [
-      "api.telegram.org"
-    ]
-  }
-}
+```mermaid
+sequenceDiagram
+    participant CC as Claude Code
+    participant Hook as hook_permission_telegram.sh
+    participant API as Telegram Bot API
+    participant Phone as Your Phone
+
+    CC->>Hook: PermissionRequest event (JSON via stdin)
+    Note over Hook: Parses tool name, command,<br/>file path, or other details
+
+    Hook->>API: sendMessage with inline keyboard<br/>(Allow / Deny buttons)
+    API->>Phone: Push notification
+
+    Note over Phone: You see what Claude wants to do<br/>and tap a button
+
+    Phone->>API: Callback: user tapped "Allow"
+    API->>Hook: getUpdates returns callback data
+
+    alt Allow
+        Hook->>CC: JSON stdout: behavior "allow"
+    else Deny
+        Hook->>CC: JSON stdout: behavior "deny"
+    else No response within timeout
+        Hook->>CC: JSON stdout: behavior "deny" + reason
+    end
 ```
 
-### 6. Restart Claude Code
+The entire flow uses Telegram's free Bot API over HTTPS. No webhook server, no open ports, no background processes. The hook script:
 
-Close and reopen Claude Code for the new hook configuration to take effect.
+1. **Receives** tool call details from Claude Code via stdin as JSON.
+2. **Formats** a clear message showing the tool name, command, file path, or other relevant context.
+3. **Sends** the message to your Telegram with inline Allow/Deny buttons.
+4. **Polls** the Telegram API for your response using long polling.
+5. **Returns** the appropriate exit code so Claude Code knows whether to proceed or stop.
 
-### 7. Test it
+---
 
-Start a Claude Code session and ask it to do something that requires permission. You should receive a Telegram message with inline buttons.
+## Features
+
+- **Phone-based approvals** -- Tap Allow or Deny from anywhere. No terminal needed.
+- **Inline keyboard buttons** -- One tap. No typing.
+- **Rich context** -- See the exact command, file path, or URL before you decide.
+- **Tool-aware formatting** -- Bash commands, file writes, edits, web fetches, and searches are each formatted to highlight the most important details.
+- **Timeout protection** -- No response within the timeout? Action is auto-denied. Claude Code never hangs.
+- **Bilingual text fallback** -- Besides buttons, you can type "yes", "no", "si", "dale", "cancel" and more, in English or Spanish.
+- **Security validation** -- Only responses from your authorized Chat ID are accepted.
+- **Configurable fallback** -- Choose whether errors (network issues, missing tools) result in allow or deny.
+- **Structured logging** -- Every decision is logged for debugging and auditing.
+- **Zero infrastructure** -- No servers, no databases, no Docker, no cloud.
+- **Single file** -- One Bash script. That's the entire hook.
+- **Free forever** -- Telegram's Bot API costs nothing.
 
 ---
 
 ## Configuration
 
-All configuration is done through environment variables. The script uses sensible defaults if a variable is not set.
+All settings are environment variables with sensible defaults:
 
 | Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Yes | -- | Your Telegram bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | Yes | -- | Your personal Telegram Chat ID (numeric) |
+|---|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | Yes | -- | Bot token from @BotFather |
+| `TELEGRAM_CHAT_ID` | Yes | -- | Your Telegram user ID (numeric) |
 | `TELEGRAM_PERMISSION_TIMEOUT` | No | `120` | Seconds to wait for a response before auto-denying |
-| `TELEGRAM_FALLBACK_ON_ERROR` | No | `allow` | What to do if the hook encounters an error: `allow` or `deny` |
-| `TELEGRAM_HOOK_LOG` | No | `/tmp/telegram_claude_hook.log` | Path to the log file. Set to empty string to disable logging |
+| `TELEGRAM_FALLBACK_ON_ERROR` | No | `allow` | What happens if the hook errors out: `allow` or `deny` |
+| `TELEGRAM_HOOK_LOG` | No | `/tmp/telegram_claude_hook.log` | Log file path. Set to empty string to disable |
 
-Example configuration in your shell profile:
+### Example: Longer timeout and strict fallback
 
 ```bash
-export TELEGRAM_BOT_TOKEN="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+export TELEGRAM_BOT_TOKEN="7012345678:AAH1bmFnZ2luZy1hLWJvdC10b2tlbi1oZXJl"
 export TELEGRAM_CHAT_ID="123456789"
-export TELEGRAM_PERMISSION_TIMEOUT="180"
+export TELEGRAM_PERMISSION_TIMEOUT="300"
 export TELEGRAM_FALLBACK_ON_ERROR="deny"
 export TELEGRAM_HOOK_LOG="$HOME/.claude/logs/telegram_hook.log"
 ```
 
 ---
 
-## How to Create a Telegram Bot
+## Automated Installer
 
-1. Open Telegram and search for [@BotFather](https://t.me/BotFather), or tap the link directly.
-
-2. Start a conversation and send the command:
-   ```
-   /newbot
-   ```
-
-3. BotFather will ask you for a **display name** for your bot. Choose any name you like (e.g., "Claude Code Permissions").
-
-4. BotFather will ask you for a **username** for your bot. This must end in `bot` (e.g., `claude_code_perms_bot`).
-
-5. BotFather will respond with your **bot token**. It looks like this:
-   ```
-   1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
-   ```
-   Save this token securely. This is your `TELEGRAM_BOT_TOKEN`.
-
-6. **Important:** Open a conversation with your new bot in Telegram and send it any message (e.g., `/start`). The bot cannot send you messages until you initiate contact first.
-
----
-
-## How to Find Your Chat ID
-
-After you have sent at least one message to your bot, run this command in your terminal (replace the token with your own):
+Don't want to do the steps manually? Use the included installer:
 
 ```bash
-curl -s "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates" | jq '.result[0].message.from.id'
+# Option 1: Run directly from the repo
+git clone https://github.com/webcomunicasolutions/claude-telegram-hook.git
+cd claude-telegram-hook
+./install.sh
+
+# Option 2: One-liner
+curl -fsSL https://raw.githubusercontent.com/webcomunicasolutions/claude-telegram-hook/main/install.sh | bash
 ```
 
-This returns your numeric Chat ID (e.g., `123456789`). This is your `TELEGRAM_CHAT_ID`.
+The installer will:
 
-Alternative method: search for [@userinfobot](https://t.me/userinfobot) on Telegram and send it any message. It will reply with your user ID.
-
----
-
-## How It Works (Technical)
-
-This hook uses the **PermissionRequest** event in Claude Code's hook system.
-
-### The PermissionRequest Hook Lifecycle
-
-1. **Trigger:** Claude Code is about to perform an action that requires user permission (running a shell command, writing a file, etc.). Instead of showing a terminal dialog, it invokes all registered `PermissionRequest` hooks.
-
-2. **Input:** The hook receives a JSON payload on stdin containing the `tool_name`, `tool_input` (the specific action details), and `session_id`.
-
-3. **Processing:** The hook script:
-   - Parses the JSON input to extract the tool name and relevant details
-   - Builds an HTML-formatted Telegram message describing the action
-   - Fetches the latest Telegram update offset to ignore old messages
-   - Sends the message to your Telegram chat with inline Allow/Deny buttons
-   - Polls the Telegram Bot API (`getUpdates`) using long polling, waiting for your response
-
-4. **Response:** When you tap a button or type a response:
-   - The script validates that the response came from your authorized Chat ID
-   - It parses the response (button callback data or free-text input)
-   - It outputs a JSON decision to stdout in the format Claude Code expects
-
-5. **Decision format:**
-   - Allow: `{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}`
-   - Deny: `{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "deny", "message": "reason"}}}`
-
-6. **Claude Code acts:** Based on the JSON output, Claude Code either proceeds with the action or aborts it.
-
-### PermissionRequest vs PreToolUse
-
-This hook is designed for the **PermissionRequest** event, which is the recommended approach for permission management. It fires specifically when Claude Code would show a permission dialog.
-
-It can also be adapted for **PreToolUse**, which fires before every tool invocation regardless of whether permission is needed. If you use PreToolUse, the JSON output format is slightly different (`{"decision": "approve"}` / `{"decision": "deny", "reason": "..."}`). See the Claude Code hooks documentation for details.
-
-### Bilingual Text Response Support
-
-When using text input instead of buttons, the hook recognizes approval and denial keywords in both English and Spanish:
-
-| Decision | Recognized words |
-|----------|-----------------|
-| Allow | yes, y, ok, go, approve, si, dale, vale, adelante, aprobar |
-| Deny | no, n, cancel, deny, nope, cancelar, rechazar |
+- Check that `curl` and `jq` are installed
+- Prompt you for your bot token and chat ID
+- Copy the hook script to `~/.claude/hooks/`
+- Add environment variables to your shell profile
+- Update your Claude Code `settings.json`
+- Send a test message to your Telegram to confirm everything works
 
 ---
 
 ## Troubleshooting
 
-### The hook does not trigger
+### I don't get any message on Telegram
 
-- Verify that `~/.claude/settings.json` contains the hook configuration under the correct event name (`PermissionRequest`).
-- Ensure the script path in the configuration matches the actual file location.
-- Restart Claude Code after modifying `settings.json`.
-- Check that the script is executable: `chmod +x ~/.claude/hooks/hook_permission_telegram.sh`.
+1. **Did you send `/start` to your bot?** Bots can't message you until you initiate. Open a chat with your bot and send `/start`.
+2. **Is your token correct?** Test it:
+   ```bash
+   curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" | jq .
+   ```
+   You should see your bot's info. If you get `"ok": false`, the token is wrong.
+3. **Is your Chat ID correct?** Send a message to your bot, then run:
+   ```bash
+   curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates" | jq '.result[-1].message.chat.id'
+   ```
+   The returned number must match your `TELEGRAM_CHAT_ID`.
 
-### No message appears in Telegram
+### Claude Code ignores the hook
 
-- Confirm that `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in your environment. Run `echo $TELEGRAM_BOT_TOKEN` to verify.
-- Make sure you have started a conversation with your bot (sent it at least one message).
-- Test the Telegram API directly:
-  ```bash
-  curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-    -d "chat_id=${TELEGRAM_CHAT_ID}" \
-    -d "text=Test message"
-  ```
-- Check the log file (default: `/tmp/telegram_claude_hook.log`) for error details.
+- Verify your `settings.json` is valid JSON (no trailing commas, proper nesting).
+- Make sure the hook is under `PermissionRequest` in your `settings.json`.
+- Check the script is executable: `ls -la ~/.claude/hooks/hook_permission_telegram.sh`.
+- Restart Claude Code after editing `settings.json`.
 
-### Message appears but buttons do not work
+### The hook times out before I can respond
 
-- Make sure you are tapping the buttons in the most recent message. Buttons on older messages may correspond to expired polling sessions.
-- Check that your Chat ID matches the one configured in `TELEGRAM_CHAT_ID`. The hook ignores callbacks from unauthorized users.
+Increase the timeout:
 
-### Timeout occurs before you can respond
+```bash
+export TELEGRAM_PERMISSION_TIMEOUT=300  # 5 minutes
+```
 
-- Increase the `TELEGRAM_PERMISSION_TIMEOUT` environment variable (e.g., `export TELEGRAM_PERMISSION_TIMEOUT=300` for 5 minutes).
-- Also increase the `timeout` value in your `settings.json` hook configuration to be higher than the permission timeout.
+Also update the `timeout` value in `settings.json` to be slightly higher (e.g., `310`).
 
-### "jq not installed" or "curl not installed" errors
+### Buttons appear but nothing happens when I tap
 
-- Install the missing dependency:
-  ```bash
-  sudo apt-get install -y jq curl
-  ```
-- When the hook cannot find its dependencies, it falls back to the configured `TELEGRAM_FALLBACK_ON_ERROR` policy (default: allow).
+- Make sure you're tapping buttons on the **most recent** message. Old messages have expired polling sessions.
+- Verify your Chat ID matches -- the hook ignores callbacks from unauthorized users.
+
+### "jq: command not found"
+
+```bash
+# Debian / Ubuntu / WSL
+sudo apt-get install -y jq
+
+# macOS
+brew install jq
+```
 
 ### Claude Code's sandbox blocks the request
 
-- Add `api.telegram.org` to the `allowedDomains` in your `settings.json` network configuration.
-- Make sure the hook command itself is allowed in the sandbox permissions.
+Add `api.telegram.org` to the allowed network domains in `settings.json`:
 
-### Log file inspection
+```json
+{
+  "network": {
+    "allowedDomains": ["api.telegram.org"]
+  }
+}
+```
 
-The hook writes detailed logs to `/tmp/telegram_claude_hook.log` by default. To follow the log in real time:
+### Checking the logs
+
+The hook writes detailed logs by default:
 
 ```bash
 tail -f /tmp/telegram_claude_hook.log
@@ -355,43 +364,89 @@ tail -f /tmp/telegram_claude_hook.log
 
 ---
 
+## FAQ
+
+**Q: Is my bot token safe?**
+A: Your bot token lets someone send messages *as* your bot, but the hook only ever messages your own Chat ID and only accepts responses from that same ID. Still, treat it like any credential: keep it in environment variables, never commit it to git. If compromised, revoke it instantly in @BotFather with `/revokenewtoken`.
+
+**Q: What if I lose internet on my phone?**
+A: The hook times out after `TELEGRAM_PERMISSION_TIMEOUT` seconds and auto-denies the action. Claude Code won't hang. You can also respond from Telegram Desktop, Telegram Web, or any device where you're logged in.
+
+**Q: Will this slow Claude Code down?**
+A: The hook adds exactly the time it takes you to tap a button. Claude Code already pauses on permission requests -- this just moves the pause from your terminal to your phone.
+
+**Q: Can I approve from multiple devices?**
+A: Yes. Telegram delivers to all your logged-in devices. Tap Allow from whichever you see first -- phone, tablet, desktop app, or web client.
+
+**Q: Can I use a Telegram group instead of a direct message?**
+A: Yes. Use the group's chat ID as `TELEGRAM_CHAT_ID` and make sure the bot is a member with permission to send messages.
+
+**Q: Does this work on Windows (WSL)?**
+A: Yes. Claude Code runs in WSL, which has `curl` and supports `jq`. The hook works identically.
+
+**Q: What about Telegram rate limits?**
+A: Telegram allows roughly 30 messages per second per bot. For a single developer approving Claude Code actions, you'll never come close.
+
+**Q: Can I auto-approve certain tools?**
+A: Yes. Change the `"matcher"` in your `settings.json` to only match tools you want Telegram approval for (e.g., `"Bash"` for shell commands only). Read-only tools like `Read`, `Glob`, and `Grep` can be left to the default terminal flow or auto-approved in Claude Code's permissions.
+
+**Q: Can I customize the message format?**
+A: Absolutely. The message template lives inside the hook script. Edit it to change the layout, add timestamps, include session IDs, or anything else you want.
+
+**Q: Does this work with Claude Code teams or shared sessions?**
+A: Each person sets up their own bot and chat ID. The hook runs locally on whoever launched Claude Code.
+
+---
+
 ## Contributing
 
-Contributions are welcome. To get started:
+Contributions are welcome. This project prizes simplicity above everything -- a PR that adds a server, a database, or a `package.json` will be politely declined.
 
-1. Fork the repository.
-2. Create a feature branch: `git checkout -b feature/my-improvement`.
-3. Make your changes and test them manually by piping JSON to the hook script:
-   ```bash
-   echo '{"tool_name":"Bash","tool_input":{"command":"ls -la"},"session_id":"test-123"}' \
-     | bash hook_permission_telegram.sh
-   ```
-4. Commit your changes with a clear message.
-5. Open a Pull Request describing what you changed and why.
+Great contributions:
 
-### Ideas for contributions
+- Bug fixes
+- Better message formatting
+- New language support for text responses
+- Documentation improvements
+- Translations (see [README_ES.md](README_ES.md))
 
-- Support for additional languages in text response parsing
-- Customizable message templates
-- Group chat support with user mention
-- Notification hooks for PostToolUse and Stop events
-- Docker container for running the bot as a persistent service
-- Rate limiting and "approve all for N minutes" mode
+```bash
+# Fork, clone, branch
+git checkout -b my-improvement
+
+# Test manually by piping JSON to the hook
+echo '{"tool_name":"Bash","tool_input":{"command":"ls -la"},"session_id":"test"}' \
+  | bash hook_permission_telegram.sh
+
+# Commit and open a PR
+git commit -m "Describe what you improved"
+git push origin my-improvement
+```
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+[MIT](LICENSE) -- Use it however you want.
 
 ---
 
 ## Built With
 
-| Technology | Role |
-|------------|------|
-| [Claude Code](https://claude.ai/code) | Anthropic's CLI for Claude -- provides the hook system |
-| [Telegram Bot API](https://core.telegram.org/bots/api) | Messaging platform for delivering permission requests |
-| [Bash](https://www.gnu.org/software/bash/) | Shell scripting language for the hook implementation |
-| [curl](https://curl.se/) | HTTP client for Telegram API requests |
-| [jq](https://jqlang.github.io/jq/) | JSON processor for parsing hook input and API responses |
+| | |
+|---|---|
+| [Bash](https://www.gnu.org/software/bash/) | The hook script itself |
+| [Telegram Bot API](https://core.telegram.org/bots/api) | Free messaging infrastructure |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Anthropic's CLI -- the permission system we extend |
+| [curl](https://curl.se/) | HTTP requests to Telegram |
+| [jq](https://jqlang.github.io/jq/) | JSON parsing |
+
+---
+
+<p align="center">
+<b>Stop watching the terminal. Start living.</b>
+<br><br>
+<a href="https://github.com/webcomunicasolutions/claude-telegram-hook">github.com/webcomunicasolutions/claude-telegram-hook</a>
+</p>
