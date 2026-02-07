@@ -158,7 +158,7 @@ ask_telegram_config() {
         if [ -z "$CHAT_ID" ]; then
             warn "Chat ID is required. Please enter your Telegram chat ID."
         elif [[ ! "$CHAT_ID" =~ ^-?[0-9]+$ ]]; then
-            warn "Chat ID should be a number (e.g., 1795387349 or -1001234567890)."
+            warn "Chat ID should be a number (e.g., 123456789 or -1001234567890)."
             read -rp "$(echo -e "${YELLOW}  Use it anyway? [y/N]: ${NC}")" use_anyway
             if [[ "$use_anyway" =~ ^[Yy]$ ]]; then
                 break
