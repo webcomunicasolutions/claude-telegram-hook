@@ -236,6 +236,34 @@ El flujo completo ocurre en segundos:
 
 ---
 
+## Limitacion conocida: Equipos Multi-Agente
+
+> **Importante:** Si usas el sistema de **Equipos de Agentes** de Claude Code (multi-agent con `Task` tool y `TeamCreate`), las **solicitudes de permiso de los subagentes NO pasan por el hook `PermissionRequest`**. En su lugar, aparecen como dialogos de terminal en la sesion principal.
+>
+> Esto significa que las acciones de los subagentes mostraran el clasico `"Do you want to proceed? [y/n]"` en tu terminal en vez de enviarte una notificacion a Telegram.
+>
+> **Por que?** Cuando un subagente necesita permiso, la solicitud se delega a la interfaz de la sesion principal, saltandose la pipeline de hooks. Es una limitacion actual del sistema de hooks de Claude Code, no de este proyecto.
+>
+> **Solucion:** Pre-aprueba los comandos que tus agentes usan habitualmente en los permisos de tu `settings.json` para que no necesiten preguntar:
+>
+> ```json
+> {
+>   "permissions": {
+>     "allow": [
+>       "Bash(export:*)",
+>       "Bash(source:*)",
+>       "Bash(curl:*)",
+>       "Bash(npm:*)",
+>       "Bash(node:*)"
+>     ]
+>   }
+> }
+> ```
+>
+> Asi los subagentes pueden trabajar de forma autonoma sin bloquearse esperando en la terminal.
+
+---
+
 ## Configuracion
 
 | Variable de entorno | Requerida | Descripcion | Ejemplo |

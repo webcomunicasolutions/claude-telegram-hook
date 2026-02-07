@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retry mechanism: after timeout, offers a Retry/Deny button instead of immediately denying
 - Configurable max retries via `TELEGRAM_MAX_RETRIES` environment variable (default: 2)
 - Retry counter shown in timeout messages ("Retry 1 of 2")
+- Documentation: known limitation with multi-agent teams (subagent permissions bypass hooks)
+- Documentation: workaround for pre-approving subagent commands
 
 ### Changed
 - Recommended `settings.json` timeout increased from 130 to 600 to accommodate retry rounds

@@ -254,6 +254,34 @@ The entire flow uses Telegram's free Bot API over HTTPS. No webhook server, no o
 
 ---
 
+## Known Limitation: Multi-Agent Teams
+
+> **Important:** If you use Claude Code's **Agent Teams** (multi-agent system with `Task` tool and `TeamCreate`), be aware that **permission requests from subagents do NOT trigger the `PermissionRequest` hook**. Instead, they appear as standard terminal prompts in the parent session.
+>
+> This means subagent actions will show the traditional `"Do you want to proceed? [y/n]"` dialog in your terminal instead of sending a Telegram notification.
+>
+> **Why?** When a subagent needs permission, the request is delegated to the parent session's UI, bypassing the hook pipeline entirely. This is a current limitation of Claude Code's hook system, not of this project.
+>
+> **Workaround:** Pre-approve the commands your agents commonly use in your `settings.json` permissions so they don't need to ask:
+>
+> ```json
+> {
+>   "permissions": {
+>     "allow": [
+>       "Bash(export:*)",
+>       "Bash(source:*)",
+>       "Bash(curl:*)",
+>       "Bash(npm:*)",
+>       "Bash(node:*)"
+>     ]
+>   }
+> }
+> ```
+>
+> This way, subagents can work autonomously without blocking on terminal prompts.
+
+---
+
 ## Configuration
 
 All settings are environment variables with sensible defaults:
