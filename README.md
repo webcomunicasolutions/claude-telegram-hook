@@ -438,6 +438,9 @@ A: Absolutely. The message template lives inside the hook script. Edit it to cha
 **Q: Does this work with Claude Code teams or shared sessions?**
 A: Each person sets up their own bot and chat ID. The hook runs locally on whoever launched Claude Code.
 
+**Q: Does this work with Claude Code's multi-agent teams (Agent Teams)?**
+A: Partially. The main session's permission requests go to Telegram as expected. However, **subagent permission requests bypass the hook** and fall back to terminal prompts. This is a Claude Code limitation, not ours. See the [Known Limitation](#known-limitation-multi-agent-teams) section above for details and workarounds.
+
 ---
 
 ## Contributing

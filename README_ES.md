@@ -409,6 +409,12 @@ El script es un archivo Bash. Puedes editarlo como quieras. El formato del mensa
 No. Es una capa adicional. Claude Code sigue respetando su sistema de permisos. Este hook intercepta la solicitud *antes* de que llegue a la terminal y te la redirige a Telegram. Si deniega en Telegram, Claude Code lo trata como si hubieras denegado en la terminal.
 </details>
 
+<details>
+<summary><strong>Funciona con el sistema multi-agente de Claude Code (Agent Teams)?</strong></summary>
+
+Parcialmente. Las solicitudes de permiso de la sesion principal van a Telegram sin problema. Pero las **solicitudes de subagentes no pasan por el hook** y se muestran como dialogos de terminal. Es una limitacion de Claude Code, no de este proyecto. Consulta la seccion [Limitacion conocida](#limitacion-conocida-equipos-multi-agente) para detalles y soluciones.
+</details>
+
 ---
 
 ## Contribuir
