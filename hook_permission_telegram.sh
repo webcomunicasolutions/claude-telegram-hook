@@ -128,11 +128,29 @@ wait_for_response() {
     local timeout="$2"
     local elapsed=0
 
+    # Reminders at halfway and 30s before timeout
+    # For 120s: reminders at 60s and 90s
+    local reminder_1=$((timeout / 2))
+    local reminder_2=$((timeout - 30))
+    local sent_r1=0 sent_r2=0
+
     while [ $elapsed -lt $timeout ]; do
         local remaining=$((timeout - elapsed))
         local this_poll=$POLL_TIMEOUT
         if [ $remaining -lt $this_poll ]; then
             this_poll=$remaining
+        fi
+
+        # Send reminders
+        if [ $sent_r1 -eq 0 ] && [ $elapsed -ge $reminder_1 ]; then
+            send_telegram "⏰ ${remaining}s left to respond"
+            log "Reminder 1 sent (${remaining}s remaining)"
+            sent_r1=1
+        fi
+        if [ $sent_r2 -eq 0 ] && [ $elapsed -ge $reminder_2 ]; then
+            send_telegram "🚨 Last ${remaining}s!"
+            log "Reminder 2 sent (${remaining}s remaining)"
+            sent_r2=1
         fi
 
         local response
@@ -281,6 +299,36 @@ build_permission_message() {
     echo "$message"
 }
 
+send_retry_button() {
+    local text="$1"
+    local response
+
+    response=$(curl -s -X POST "${TELEGRAM_API}/sendMessage" \
+        -H "Content-Type: application/json" \
+        -d "$(jq -n \
+            --arg chat_id "$CHAT_ID" \
+            --arg text "$text" \
+            '{
+                chat_id: ($chat_id | tonumber),
+                text: $text,
+                parse_mode: "HTML",
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: "🔄 Retry", callback_data: "retry" },
+                        { text: "❌ Deny", callback_data: "deny" }
+                    ]]
+                }
+            }'
+        )" 2>/dev/null)
+
+    local ok
+    ok=$(echo "$response" | jq -r '.ok' 2>/dev/null)
+    [ "$ok" = "true" ]
+}
+
+# Maximum number of retry rounds (to prevent infinite loops)
+MAX_RETRIES="${TELEGRAM_MAX_RETRIES:-2}"
+
 # --- Main ---
 
 log "=== Hook PermissionRequest started ==="
@@ -314,45 +362,92 @@ log "Tool: $TOOL_NAME | Session: $SESSION_ID"
 
 PERMISSION_MSG=$(build_permission_message "$TOOL_NAME" "$TOOL_INPUT")
 
-OFFSET=$(get_latest_offset)
-log "Offset: $OFFSET"
+RETRY_COUNT=0
 
-if ! send_telegram_with_buttons "$PERMISSION_MSG"; then
-    log "ERROR: Could not send to Telegram, using fallback policy"
-    respond "$FALLBACK_ON_ERROR" "Could not reach Telegram"
-    exit 0
-fi
+while true; do
+    OFFSET=$(get_latest_offset)
+    log "Offset: $OFFSET (attempt $((RETRY_COUNT + 1)))"
 
-log "Waiting for response (timeout: ${PERMISSION_TIMEOUT}s)..."
-USER_RESPONSE=$(wait_for_response "$OFFSET" "$PERMISSION_TIMEOUT")
+    if [ $RETRY_COUNT -eq 0 ]; then
+        if ! send_telegram_with_buttons "$PERMISSION_MSG"; then
+            log "ERROR: Could not send to Telegram, using fallback policy"
+            respond "$FALLBACK_ON_ERROR" "Could not reach Telegram"
+            exit 0
+        fi
+    else
+        if ! send_telegram_with_buttons "$PERMISSION_MSG"; then
+            log "ERROR: Could not resend to Telegram"
+            respond "deny" "Could not reach Telegram on retry"
+            exit 0
+        fi
+        log "Permission message resent (retry $RETRY_COUNT)"
+    fi
 
-if [ $? -ne 0 ]; then
-    log "Timeout: no response"
-    send_telegram "Timeout: no response in ${PERMISSION_TIMEOUT}s. Action denied."
-    respond "deny" "Timeout: no response in ${PERMISSION_TIMEOUT}s"
-    exit 0
-fi
+    log "Waiting for response (timeout: ${PERMISSION_TIMEOUT}s)..."
+    USER_RESPONSE=$(wait_for_response "$OFFSET" "$PERMISSION_TIMEOUT")
 
-log "User response: $USER_RESPONSE"
-DECISION=$(parse_user_response "$USER_RESPONSE")
+    if [ $? -ne 0 ]; then
+        # Timeout - offer retry if under the limit
+        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            log "Timeout: offering retry ($((RETRY_COUNT + 1))/$MAX_RETRIES)"
+            RETRY_COUNT=$((RETRY_COUNT + 1))
 
-case "$DECISION" in
-    allow)
-        log "Decision: ALLOWED"
-        send_telegram "Action allowed"
-        respond "allow"
-        ;;
-    deny)
-        log "Decision: DENIED"
-        send_telegram "Action denied"
-        respond "deny" "User denied from Telegram"
-        ;;
-    unknown)
-        log "Decision: UNKNOWN ($USER_RESPONSE), denying for safety"
-        send_telegram "Unrecognized response: '${USER_RESPONSE}'. Denied for safety."
-        respond "deny" "Unrecognized response: ${USER_RESPONSE}"
-        ;;
-esac
+            OFFSET=$(get_latest_offset)
+            send_retry_button "⏰ <b>Timed out</b> waiting for response.
+
+Tap <b>Retry</b> to get the permission request again, or <b>Deny</b> to reject it.
+
+<i>Retry $RETRY_COUNT of $MAX_RETRIES</i>"
+
+            # Wait 60 seconds for the retry button
+            RETRY_RESPONSE=$(wait_for_response "$OFFSET" 60)
+
+            if [ $? -eq 0 ] && [ "$RETRY_RESPONSE" = "retry" ]; then
+                log "User requested retry"
+                send_telegram "🔄 Resending permission request..."
+                continue
+            elif [ "$RETRY_RESPONSE" = "deny" ]; then
+                log "User denied from retry prompt"
+                send_telegram "Action denied"
+                respond "deny" "User denied from Telegram (retry prompt)"
+                exit 0
+            else
+                log "No retry response, denying"
+                send_telegram "No response to retry prompt. Action denied."
+                respond "deny" "Timeout: no response after retry prompt"
+                exit 0
+            fi
+        else
+            log "Timeout: max retries ($MAX_RETRIES) reached"
+            send_telegram "Timeout: max retries reached. Action denied."
+            respond "deny" "Timeout after $MAX_RETRIES retries"
+            exit 0
+        fi
+    fi
+
+    # Got a response - process it
+    log "User response: $USER_RESPONSE"
+    DECISION=$(parse_user_response "$USER_RESPONSE")
+
+    case "$DECISION" in
+        allow)
+            log "Decision: ALLOWED"
+            send_telegram "Action allowed"
+            respond "allow"
+            ;;
+        deny)
+            log "Decision: DENIED"
+            send_telegram "Action denied"
+            respond "deny" "User denied from Telegram"
+            ;;
+        unknown)
+            log "Decision: UNKNOWN ($USER_RESPONSE), denying for safety"
+            send_telegram "Unrecognized response: '${USER_RESPONSE}'. Denied for safety."
+            respond "deny" "Unrecognized response: ${USER_RESPONSE}"
+            ;;
+    esac
+    break
+done
 
 log "=== Hook PermissionRequest finished ==="
 exit 0
