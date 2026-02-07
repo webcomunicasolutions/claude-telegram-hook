@@ -161,7 +161,7 @@ Agrega el hook en tu `~/.claude/settings.json`:
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/hook_permission_telegram.sh",
-            "timeout": 130
+            "timeout": 600
           }
         ]
       }
@@ -171,6 +171,8 @@ Agrega el hook en tu `~/.claude/settings.json`:
 ```
 
 > **Nota:** Si ya tienes un `settings.json` con otros hooks, simplemente agrega la entrada `PermissionRequest`. El `matcher` vacio (`""`) significa que se activa para todas las solicitudes de permiso. Puedes cambiarlo a `"Bash"` si solo quieres interceptar comandos de terminal.
+>
+> **Sobre el timeout:** Los `600` segundos dan margen suficiente para el mecanismo de reintento (cada ronda son ~120s de espera + 60s para el boton de retry, hasta 2 reintentos por defecto). El timeout real por ronda se controla con `TELEGRAM_PERMISSION_TIMEOUT` (120s por defecto).
 >
 > **Sobre PermissionRequest:** Este hook usa el evento `PermissionRequest`, que solo se dispara cuando Claude Code te mostraria un dialogo de permiso. No te molestara con herramientas que ya estan auto-aprobadas en tu configuracion.
 
@@ -190,10 +192,21 @@ sequenceDiagram
     C->>H: Solicita permiso (PermissionRequest)
     H->>T: Envia mensaje con botones<br/>[Permitir] [Denegar]
     T->>U: Notificacion push
-    U->>T: Toque en [Permitir]
-    T->>H: Callback con respuesta
-    H->>C: JSON: behavior "allow"
-    Note over C: Continua trabajando
+
+    alt Respondes a tiempo
+        U->>T: Toque en [Permitir]
+        T->>H: Callback con respuesta
+        H->>C: JSON: behavior "allow"
+        Note over C: Continua trabajando
+    else No respondes (timeout)
+        H->>U: ⏰ Recordatorios a los 60s y 90s
+        H->>T: "Tiempo agotado" + [Reintentar] [Denegar]
+        T->>U: Notificacion push
+        U->>T: Toque en [Reintentar]
+        T->>H: Callback "retry"
+        H->>T: Reenvia solicitud original
+        T->>U: Segunda oportunidad
+    end
 ```
 
 El flujo completo ocurre en segundos:
@@ -201,9 +214,10 @@ El flujo completo ocurre en segundos:
 1. Claude Code quiere usar una herramienta (por ejemplo, ejecutar `git push`).
 2. El hook `PermissionRequest` se activa y ejecuta nuestro script.
 3. El script envia un mensaje a Telegram con botones inline: **Permitir** y **Denegar**.
-4. Tu recibes la notificacion en tu telefono, lees que quiere hacer Claude, y tocas un boton.
-5. El script recibe tu respuesta y le dice a Claude Code si puede continuar o no.
-6. Claude Code sigue (o se detiene) segun tu decision.
+4. Tu recibes la notificacion en tu telefono. Si no respondes, te llegan recordatorios a los 60s y 90s.
+5. Tocas un boton. Si se pasa el tiempo, aparece un boton **Reintentar** para volver a recibir la solicitud.
+6. El script recibe tu respuesta y le dice a Claude Code si puede continuar o no.
+7. Claude Code sigue (o se detiene) segun tu decision.
 
 ---
 
@@ -212,7 +226,9 @@ El flujo completo ocurre en segundos:
 - **Notificaciones en tiempo real** - Cada solicitud de permiso llega a tu telefono al instante.
 - **Botones interactivos** - Nada de escribir "yes" o "no". Un toque y listo.
 - **Contexto completo** - El mensaje incluye que herramienta quiere usar y con que parametros.
-- **Timeout configurable** - Si no respondes en X segundos, se deniega automaticamente (seguridad ante todo).
+- **Recordatorios inteligentes** - El movil vuelve a vibrar a los 60s y 90s si no has respondido. No mas notificaciones perdidas.
+- **Reintento tras timeout** - Se te paso el tiempo? Aparece un boton de Reintentar para volver a recibir la solicitud sin perder tu sesion de Claude.
+- **Timeout configurable** - Si no respondes tras los reintentos, se deniega automaticamente (seguridad ante todo).
 - **Sin dependencias pesadas** - Solo `curl` y `jq`. Nada mas.
 - **Sin servidor** - Todo corre localmente. Telegram hace de puente gratuito.
 - **Filtrado por herramienta** - Puedes configurar que herramientas requieren aprobacion y cuales pasan directo.
@@ -226,7 +242,8 @@ El flujo completo ocurre en segundos:
 |---------------------|:---------:|-------------|---------|
 | `TELEGRAM_BOT_TOKEN` | Si | Token de tu bot de Telegram (de @BotFather) | `7123456789:AAH...` |
 | `TELEGRAM_CHAT_ID` | Si | Tu ID numerico de chat en Telegram | `123456789` |
-| `TELEGRAM_PERMISSION_TIMEOUT` | No | Segundos de espera antes de denegar automaticamente (defecto: `120`) | `300` |
+| `TELEGRAM_PERMISSION_TIMEOUT` | No | Segundos de espera antes de ofrecer reintento (defecto: `120`) | `300` |
+| `TELEGRAM_MAX_RETRIES` | No | Cuantas veces ofrecer el boton Reintentar tras timeout (defecto: `2`) | `3` |
 | `TELEGRAM_FALLBACK_ON_ERROR` | No | Que hacer si el hook falla: `allow` o `deny` (defecto: `allow`) | `deny` |
 | `TELEGRAM_HOOK_LOG` | No | Ruta al archivo de log para depuracion | `/tmp/telegram_claude_hook.log` |
 
@@ -281,11 +298,17 @@ El instalador te guia paso a paso:
 
 ### Timeout: siempre deniega sin esperar
 
-- El timeout por defecto son 120 segundos. Puedes aumentarlo:
-  ```bash
-  export TELEGRAM_PERMISSION_TIMEOUT=300  # 5 minutos
-  ```
-- Asegurate de que tu conexion a internet es estable (el script necesita alcanzar `api.telegram.org`).
+El hook te envia recordatorios a los 60s y 90s, y ofrece un boton de Reintentar cuando se agota el tiempo. Si aun necesitas mas tiempo:
+
+1. Aumenta el timeout por ronda:
+   ```bash
+   export TELEGRAM_PERMISSION_TIMEOUT=300  # 5 minutos por ronda
+   ```
+2. Aumenta el numero de reintentos:
+   ```bash
+   export TELEGRAM_MAX_RETRIES=3  # 3 rondas de reintento
+   ```
+3. Asegurate de que el `timeout` en `settings.json` es suficiente para cubrir todas las rondas (ej: `600`).
 
 ### Error "jq: command not found"
 
@@ -331,7 +354,7 @@ Si. Telegram funciona en movil, escritorio y web. Los botones aparecen en cualqu
 <details>
 <summary><strong>Que pasa si no respondo?</strong></summary>
 
-Despues del timeout configurado (120 segundos por defecto), el hook deniega automaticamente la solicitud. Esto es una medida de seguridad: si no estas disponible, Claude Code no ejecuta nada sin tu permiso.
+Primero te llegan recordatorios a los 60 y 90 segundos (tu movil vuelve a vibrar). Si se agota el timeout (120s por defecto), aparece un boton **Reintentar** para que puedas volver a recibir la solicitud. Si sigues sin responder tras todos los reintentos (2 por defecto), el hook deniega automaticamente la solicitud. Seguridad ante todo: Claude Code nunca ejecuta nada sin tu permiso.
 </details>
 
 <details>

@@ -172,7 +172,7 @@ Open (or create) `~/.claude/settings.json` and add the hook:
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/hook_permission_telegram.sh",
-            "timeout": 130
+            "timeout": 600
           }
         ]
       }
@@ -182,6 +182,8 @@ Open (or create) `~/.claude/settings.json` and add the hook:
 ```
 
 > **Tip:** The `"matcher": ""` means the hook triggers for all permission requests. You can set it to `"Bash"` to only get Telegram prompts for shell commands, for example.
+>
+> **About the timeout:** The `600` seconds gives enough room for the retry mechanism (each round is ~120s wait + 60s retry window, up to 2 retries by default). The actual per-round timeout is controlled by `TELEGRAM_PERMISSION_TIMEOUT` (120s default).
 >
 > **About PermissionRequest:** This hook uses the `PermissionRequest` event, which fires only when Claude Code would show you a permission dialog. This means it won't bother you for tools that are already auto-approved in your permissions.
 
@@ -213,8 +215,12 @@ sequenceDiagram
         Hook->>CC: JSON stdout: behavior "allow"
     else Deny
         Hook->>CC: JSON stdout: behavior "deny"
-    else No response within timeout
-        Hook->>CC: JSON stdout: behavior "deny" + reason
+    else No response (timeout)
+        Hook->>Phone: ⏰ "Timed out" + [Retry] [Deny]
+        Phone->>API: Callback: user tapped "Retry"
+        API->>Hook: getUpdates returns "retry"
+        Hook->>API: Resend original permission message
+        API->>Phone: Push notification (second chance)
     end
 ```
 
@@ -223,8 +229,9 @@ The entire flow uses Telegram's free Bot API over HTTPS. No webhook server, no o
 1. **Receives** tool call details from Claude Code via stdin as JSON.
 2. **Formats** a clear message showing the tool name, command, file path, or other relevant context.
 3. **Sends** the message to your Telegram with inline Allow/Deny buttons.
-4. **Polls** the Telegram API for your response using long polling.
-5. **Returns** the appropriate exit code so Claude Code knows whether to proceed or stop.
+4. **Reminds** you at 60s and 90s with extra notifications if you haven't responded.
+5. **Offers retry** if the timeout expires -- tap Retry to get the permission request again.
+6. **Returns** the appropriate JSON so Claude Code knows whether to proceed or stop.
 
 ---
 
@@ -234,6 +241,8 @@ The entire flow uses Telegram's free Bot API over HTTPS. No webhook server, no o
 - **Inline keyboard buttons** -- One tap. No typing.
 - **Rich context** -- See the exact command, file path, or URL before you decide.
 - **Tool-aware formatting** -- Bash commands, file writes, edits, web fetches, and searches are each formatted to highlight the most important details.
+- **Smart reminders** -- Phone buzzes again at 60s and 90s if you haven't responded. No more missed notifications.
+- **Retry after timeout** -- Missed the window? A Retry button appears so you can get the permission request again without losing your Claude session.
 - **Timeout protection** -- No response within the timeout? Action is auto-denied. Claude Code never hangs.
 - **Bilingual text fallback** -- Besides buttons, you can type "yes", "no", "si", "dale", "cancel" and more, in English or Spanish.
 - **Security validation** -- Only responses from your authorized Chat ID are accepted.
@@ -253,7 +262,8 @@ All settings are environment variables with sensible defaults:
 |---|---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Yes | -- | Bot token from @BotFather |
 | `TELEGRAM_CHAT_ID` | Yes | -- | Your Telegram user ID (numeric) |
-| `TELEGRAM_PERMISSION_TIMEOUT` | No | `120` | Seconds to wait for a response before auto-denying |
+| `TELEGRAM_PERMISSION_TIMEOUT` | No | `120` | Seconds to wait for a response before offering retry |
+| `TELEGRAM_MAX_RETRIES` | No | `2` | How many times to offer a Retry button after timeout |
 | `TELEGRAM_FALLBACK_ON_ERROR` | No | `allow` | What happens if the hook errors out: `allow` or `deny` |
 | `TELEGRAM_HOOK_LOG` | No | `/tmp/telegram_claude_hook.log` | Log file path. Set to empty string to disable |
 
@@ -319,13 +329,17 @@ The installer will:
 
 ### The hook times out before I can respond
 
-Increase the timeout:
+The hook sends you reminders at 60s and 90s, and offers a Retry button when the timeout expires. If you still need more time, you can:
 
-```bash
-export TELEGRAM_PERMISSION_TIMEOUT=300  # 5 minutes
-```
-
-Also update the `timeout` value in `settings.json` to be slightly higher (e.g., `310`).
+1. Increase the per-round timeout:
+   ```bash
+   export TELEGRAM_PERMISSION_TIMEOUT=300  # 5 minutes per round
+   ```
+2. Increase the number of retries:
+   ```bash
+   export TELEGRAM_MAX_RETRIES=3  # 3 retry rounds
+   ```
+3. Make sure the `timeout` in `settings.json` is high enough to cover all rounds (e.g., `600`).
 
 ### Buttons appear but nothing happens when I tap
 
@@ -370,7 +384,7 @@ tail -f /tmp/telegram_claude_hook.log
 A: Your bot token lets someone send messages *as* your bot, but the hook only ever messages your own Chat ID and only accepts responses from that same ID. Still, treat it like any credential: keep it in environment variables, never commit it to git. If compromised, revoke it instantly in @BotFather with `/revokenewtoken`.
 
 **Q: What if I lose internet on my phone?**
-A: The hook times out after `TELEGRAM_PERMISSION_TIMEOUT` seconds and auto-denies the action. Claude Code won't hang. You can also respond from Telegram Desktop, Telegram Web, or any device where you're logged in.
+A: The hook times out after `TELEGRAM_PERMISSION_TIMEOUT` seconds. But don't worry -- it will offer you a Retry button (up to `TELEGRAM_MAX_RETRIES` times) so you get another chance. If all retries expire, the action is auto-denied. Claude Code won't hang. You can also respond from Telegram Desktop, Telegram Web, or any device where you're logged in.
 
 **Q: Will this slow Claude Code down?**
 A: The hook adds exactly the time it takes you to tap a button. Claude Code already pauses on permission requests -- this just moves the pause from your terminal to your phone.

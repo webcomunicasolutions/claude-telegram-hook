@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-02-07
+
+### Added
+- Smart reminders: phone buzzes again at 60s and 90s if no response
+- Retry mechanism: after timeout, offers a Retry/Deny button instead of immediately denying
+- Configurable max retries via `TELEGRAM_MAX_RETRIES` environment variable (default: 2)
+- Retry counter shown in timeout messages ("Retry 1 of 2")
+
+### Changed
+- Recommended `settings.json` timeout increased from 130 to 600 to accommodate retry rounds
+- Timeout flow: instead of instant denial, now offers up to 2 retry rounds before final denial
+
 ## [0.1.0] - 2026-02-07
 
 ### Added
@@ -23,4 +35,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wrapper script for loading environment variables automatically
 - Automatic backup of `settings.json` before modifications
 
+[0.2.0]: https://github.com/webcomunicasolutions/claude-telegram-hook/releases/tag/v0.2.0
 [0.1.0]: https://github.com/webcomunicasolutions/claude-telegram-hook/releases/tag/v0.1.0
