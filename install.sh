@@ -310,7 +310,7 @@ configure_settings() {
             {
                 "type": "command",
                 "command": $cmd,
-                "timeout": 180
+                "timeout": 130
             }
         ]
     }')
