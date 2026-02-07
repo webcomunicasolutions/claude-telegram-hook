@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-07
+
+### Added
+- `telegram_approve.sh`: standalone reusable library for any Bash script (not just Claude Code)
+- Functions: `telegram_ask`, `telegram_choose`, `telegram_send`, `telegram_send_buttons`
+- `examples/` directory with 4 ready-to-use scripts:
+  - `backup_with_approval.sh` - Backup with upload confirmation
+  - `deploy_with_approval.sh` - Deploy with approval gate
+  - `server_maintenance.sh` - Disk alert with multiple choices
+  - `cron_notification.sh` - Simple post-task notification
+- "Bonus: Use It Beyond Claude Code" section in both READMEs
+
 ## [0.2.0] - 2026-02-07
 
 ### Added
@@ -37,5 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wrapper script for loading environment variables automatically
 - Automatic backup of `settings.json` before modifications
 
+[0.3.0]: https://github.com/webcomunicasolutions/claude-telegram-hook/releases/tag/v0.3.0
 [0.2.0]: https://github.com/webcomunicasolutions/claude-telegram-hook/releases/tag/v0.2.0
 [0.1.0]: https://github.com/webcomunicasolutions/claude-telegram-hook/releases/tag/v0.1.0

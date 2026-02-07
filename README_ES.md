@@ -417,6 +417,59 @@ Parcialmente. Las solicitudes de permiso de la sesion principal van a Telegram s
 
 ---
 
+## Bonus: Usalo mas alla de Claude Code
+
+El patron de aprobacion por Telegram no esta limitado a Claude Code. Incluimos una **libreria Bash independiente** (`telegram_approve.sh`) que puedes usar con `source` desde cualquier script: backups, deploys, cron jobs, mantenimiento de servidores, lo que sea.
+
+### Inicio rapido
+
+```bash
+source telegram_approve.sh
+
+# Pregunta si/no (devuelve exit code 0 o 1)
+if telegram_ask "<b>Subir backup?</b>" "Subir" "Saltar"; then
+    echo "Aprobado"
+fi
+
+# Opciones multiples (devuelve el callback_data elegido en stdout)
+choice=$(telegram_choose "Disco al 92%. Que hacemos?" \
+    "Limpiar logs" "clean" \
+    "Reiniciar" "restart" \
+    "Ignorar" "skip")
+
+# Notificacion simple (sin botones)
+telegram_send "<b>Cron job terminado</b> -- 0 errores"
+```
+
+### Funciones disponibles
+
+| Funcion | Que hace | Retorno |
+|---|---|---|
+| `telegram_ask "texto" ["Si"] ["No"]` | Pregunta si/no con botones | Exit code: 0=si, 1=no |
+| `telegram_choose "texto" "Btn" "data" ...` | Botones con multiples opciones | stdout: `callback_data` elegido |
+| `telegram_send "texto"` | Notificacion simple | -- |
+| `telegram_send_buttons "texto" "B1" "d1" "B2" "d2"` | Mensaje con 2 botones custom | -- |
+
+### Ejemplos
+
+Mira el directorio [`examples/`](examples/):
+
+| Script | Que hace |
+|---|---|
+| [`backup_with_approval.sh`](examples/backup_with_approval.sh) | Crea backup y pregunta antes de subirlo |
+| [`deploy_with_approval.sh`](examples/deploy_with_approval.sh) | Muestra info de git y pide aprobacion para deploy |
+| [`server_maintenance.sh`](examples/server_maintenance.sh) | Alerta de disco con multiples opciones |
+| [`cron_notification.sh`](examples/cron_notification.sh) | Notificacion simple tras un cron job |
+
+```bash
+# Probar un ejemplo
+export TELEGRAM_BOT_TOKEN="tu-token"
+export TELEGRAM_CHAT_ID="tu-chat-id"
+bash examples/backup_with_approval.sh /var/www
+```
+
+---
+
 ## Contribuir
 
 Las contribuciones son bienvenidas. Si tienes una idea, encuentras un bug, o quieres mejorar algo:

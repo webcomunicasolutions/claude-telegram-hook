@@ -443,6 +443,59 @@ A: Partially. The main session's permission requests go to Telegram as expected.
 
 ---
 
+## Bonus: Use It Beyond Claude Code
+
+The Telegram approval pattern is not limited to Claude Code. We ship a **standalone Bash library** (`telegram_approve.sh`) you can `source` from any script -- backup jobs, deploys, cron tasks, server maintenance, anything.
+
+### Quick Start
+
+```bash
+source telegram_approve.sh
+
+# Yes/No question (returns exit code 0 or 1)
+if telegram_ask "<b>Upload backup?</b>" "Upload" "Skip"; then
+    echo "Approved"
+fi
+
+# Multiple choice (returns chosen callback_data on stdout)
+choice=$(telegram_choose "Disk at 92%. What to do?" \
+    "Clean logs" "clean" \
+    "Restart" "restart" \
+    "Ignore" "skip")
+
+# Simple notification (no buttons)
+telegram_send "<b>Cron job finished</b> -- 0 errors"
+```
+
+### Available Functions
+
+| Function | What it does | Returns |
+|---|---|---|
+| `telegram_ask "text" ["Yes"] ["No"]` | Yes/No with buttons | Exit code: 0=yes, 1=no |
+| `telegram_choose "text" "Btn" "data" ...` | Multiple choice buttons | stdout: chosen `callback_data` |
+| `telegram_send "text"` | Plain notification | -- |
+| `telegram_send_buttons "text" "B1" "d1" "B2" "d2"` | Custom 2-button message | -- |
+
+### Examples
+
+See the [`examples/`](examples/) directory:
+
+| Script | What it does |
+|---|---|
+| [`backup_with_approval.sh`](examples/backup_with_approval.sh) | Creates a backup, asks before uploading |
+| [`deploy_with_approval.sh`](examples/deploy_with_approval.sh) | Shows git info, asks before deploying |
+| [`server_maintenance.sh`](examples/server_maintenance.sh) | Disk alert with multiple action choices |
+| [`cron_notification.sh`](examples/cron_notification.sh) | Simple notification after a cron job |
+
+```bash
+# Try an example
+export TELEGRAM_BOT_TOKEN="your-token"
+export TELEGRAM_CHAT_ID="your-chat-id"
+bash examples/backup_with_approval.sh /var/www
+```
+
+---
+
 ## Contributing
 
 Contributions are welcome. This project prizes simplicity above everything -- a PR that adds a server, a database, or a `package.json` will be politely declined.
