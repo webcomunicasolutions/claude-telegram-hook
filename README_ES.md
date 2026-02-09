@@ -59,6 +59,29 @@ Claude: sigue trabajando.
 </tr>
 </table>
 
+### Con Filtro Inteligente (v0.4.0)
+
+```
+Tu: Refactoriza el modulo de auth y pasa los tests.
+
+Claude lee 20 archivos...        (auto-aprobado, sin notificacion)
+Claude ejecuta `git status`...   (auto-aprobado, sin notificacion)
+Claude ejecuta `npm test`...     (auto-aprobado, sin notificacion)
+
+Claude quiere ejecutar: git push
+  [Popup Windows: Si/No - 30 segundos]
+  *Ves el popup en la barra de tareas, click Si*
+  Listo. Sin tocar el movil.
+
+Claude quiere ejecutar: rm -rf node_modules && npm install
+  [Popup Windows: Si/No - 30 segundos]
+  *Estas en la cocina, el popup expira...*
+  [Telegram: Permitir/Denegar - 5 minutos]
+  *El movil vibra, toque en Permitir*
+```
+
+Solo las operaciones peligrosas te molestan. Y respondes desde donde estes.
+
 ---
 
 ## Que necesitas
@@ -183,46 +206,126 @@ Agrega el hook en tu `~/.claude/settings.json`:
 ## Como funciona
 
 ```mermaid
-sequenceDiagram
-    participant C as Claude Code
-    participant H as Hook (Bash)
-    participant T as Telegram Bot API
-    participant U as Tu Telefono
-
-    C->>H: Solicita permiso (PermissionRequest)
-    H->>T: Envia mensaje con botones<br/>[Permitir] [Denegar]
-    T->>U: Notificacion push
-
-    alt Respondes a tiempo
-        U->>T: Toque en [Permitir]
-        T->>H: Callback con respuesta
-        H->>C: JSON: behavior "allow"
-        Note over C: Continua trabajando
-    else No respondes (timeout)
-        H->>U: ⏰ Recordatorios a los 60s y 90s
-        H->>T: "Tiempo agotado" + [Reintentar] [Denegar]
-        T->>U: Notificacion push
-        U->>T: Toque en [Reintentar]
-        T->>H: Callback "retry"
-        H->>T: Reenvia solicitud original
-        T->>U: Segunda oportunidad
-    end
+flowchart TD
+    A[Claude Code: PermissionRequest] --> B{Capa 1: Filtro Inteligente}
+    B -->|Seguro: ls, cat, git status...| C[Auto-aprobar]
+    B -->|Peligroso: rm, sudo, git push...| D{Capa 2: Dialogo Local}
+    D -->|Si| E[Permitir]
+    D -->|No| F[Denegar]
+    D -->|Timeout / Sin GUI| G{Capa 3: Telegram}
+    G -->|Boton Permitir| E
+    G -->|Boton Denegar| F
+    G -->|Timeout| H{Reintentar?}
+    H -->|Toque en Reintentar| G
+    H -->|Reintentos agotados| F
 ```
 
-El flujo completo ocurre en segundos:
+El flujo en tres capas:
 
-1. Claude Code quiere usar una herramienta (por ejemplo, ejecutar `git push`).
-2. El hook `PermissionRequest` se activa y ejecuta nuestro script.
-3. El script envia un mensaje a Telegram con botones inline: **Permitir** y **Denegar**.
-4. Tu recibes la notificacion en tu telefono. Si no respondes, te llegan recordatorios a los 60s y 90s.
-5. Tocas un boton. Si se pasa el tiempo, aparece un boton **Reintentar** para volver a recibir la solicitud.
-6. El script recibe tu respuesta y le dice a Claude Code si puede continuar o no.
-7. Claude Code sigue (o se detiene) segun tu decision.
+1. **Filtro Inteligente** -- Clasifica la operacion por riesgo. Las operaciones seguras (`ls`, `cat`, `git status`, `Read`, `Grep`...) se auto-aprueban al instante. Sin notificacion, sin espera.
+2. **Dialogo Local** -- Las operaciones peligrosas muestran un popup nativo en tu PC (Windows/Linux/macOS). Si respondes dentro del timeout (30s por defecto), listo. Sin Telegram.
+3. **Telegram** -- Si el dialogo local expira o no esta disponible (SSH, sin GUI), la solicitud escala a Telegram con botones Permitir/Denegar, recordatorios y mecanismo de reintento.
+
+---
+
+## Filtro Inteligente
+
+No todas las solicitudes de permiso son iguales. `ls -la` no es `rm -rf /`. El filtro inteligente clasifica las operaciones por nivel de riesgo y solo te molesta cuando importa.
+
+### Modos de Sensibilidad
+
+| Modo | Comportamiento | Caso de uso |
+|------|---------------|-------------|
+| **`smart`** (defecto) | Auto-aprueba ops seguras, pregunta por las peligrosas | Desarrollo diario |
+| `critical` | Solo las operaciones mas destructivas necesitan aprobacion | Usuarios experimentados que confian en su IA |
+| `all` | Todo va a Telegram (comportamiento v0.3) | Control maximo |
+
+```bash
+export TELEGRAM_SENSITIVITY="smart"  # o "critical" o "all"
+```
+
+### Que se Auto-Aprueba (modo smart)
+
+| Categoria | Ejemplos |
+|-----------|---------|
+| Inspeccion de archivos | `ls`, `cat`, `head`, `tail`, `wc`, `file`, `stat` |
+| Busqueda | `grep`, `rg`, `find`, `which` |
+| Git (solo lectura) | `git status`, `git log`, `git diff`, `git branch` |
+| Info de paquetes | `npm list`, `pip list`, `pip freeze` |
+| Info del sistema | `ps`, `df`, `free`, `uname`, `whoami` |
+| Procesamiento de datos | `jq`, `sort`, `uniq`, `cut`, `awk` |
+| Herramientas seguras | Read, Glob, Grep, WebFetch, WebSearch |
+
+### Que Necesita Aprobacion
+
+| Categoria | Ejemplos |
+|-----------|---------|
+| Destructivo | `rm`, `rmdir`, `shred` |
+| Privilegiado | `sudo`, `chmod`, `chown`, `kill` |
+| Sistema | `systemctl`, `reboot`, `mkfs`, `dd` |
+| Git (escritura) | `git push`, `git reset`, `git merge`, `git clean` |
+| Paquetes | `apt install`, `npm install`, `pip install` |
+| Docker | `docker rm`, `docker stop`, `docker prune` |
+| Archivos sensibles | `.env`, `.ssh/*`, `credentials`, `/etc/*` |
+
+### Comandos Compuestos
+
+Los comandos compuestos (`|`, `&&`, `||`, `;`) se analizan dividiendolos en partes. Si **cualquier** sub-comando es peligroso, toda la cadena necesita aprobacion:
+
+```bash
+git add . && git push    # -> peligroso (git push)
+cat file.txt | grep foo  # -> seguro (ambos seguros)
+ls -la && rm temp.txt    # -> peligroso (rm)
+```
+
+### Analisis de Heredoc / Script Inline
+
+Los scripts inline de Python y Node.js (`python3 -c "..."`, `python3 << 'EOF'`) se escanean buscando patrones peligrosos como `os.remove`, `subprocess`, `shutil.rmtree`, `fs.unlinkSync`, etc.
+
+---
+
+## Dialogo Local (PC Primero)
+
+Si estas en tu PC, no deberia hacer falta coger el movil. El hook puede mostrar un **popup nativo** en tu ordenador primero, y solo escalar a Telegram si no respondes.
+
+```
+Operacion peligrosa detectada
+         |
+    [Fase 1: PC]
+    Popup nativo (Si/No)
+    Timeout: 30 segundos
+         |
+    Respondiste -> listo
+    Timeout ->
+         |
+    [Fase 2: Telegram]
+    Mensaje con botones
+    Timeout: 5 minutos
+```
+
+### Plataformas Soportadas
+
+| Plataforma | Metodo | Requisitos |
+|------------|--------|-----------|
+| **WSL2** | Popup nativo Windows via `powershell.exe` | Ninguno (incluido) |
+| **Linux** | Dialogo `zenity` | `apt install zenity` |
+| **macOS** | Dialogo `osascript` | Ninguno (incluido) |
+| **Sin GUI** | Salta directo a Telegram | -- |
+
+### Configuracion
+
+```bash
+export TELEGRAM_LOCAL_DELAY=30  # segundos del popup PC (0 = desactivar)
+```
+
+Pon `0` para saltar el dialogo local e ir directo a Telegram (util para servidores remotos/headless).
 
 ---
 
 ## Caracteristicas
 
+- **Filtro inteligente** - Las operaciones seguras se auto-aprueban. Solo las peligrosas necesitan tu atencion.
+- **Dialogo local** - Popup en el PC antes de Telegram. Responde desde tu pantalla sin tocar el movil.
 - **Notificaciones en tiempo real** - Cada solicitud de permiso llega a tu telefono al instante.
 - **Botones interactivos** - Nada de escribir "yes" o "no". Un toque y listo.
 - **Contexto completo** - El mensaje incluye que herramienta quiere usar y con que parametros.
@@ -270,7 +373,9 @@ El flujo completo ocurre en segundos:
 |---------------------|:---------:|-------------|---------|
 | `TELEGRAM_BOT_TOKEN` | Si | Token de tu bot de Telegram (de @BotFather) | `7123456789:AAH...` |
 | `TELEGRAM_CHAT_ID` | Si | Tu ID numerico de chat en Telegram | `123456789` |
-| `TELEGRAM_PERMISSION_TIMEOUT` | No | Segundos de espera antes de ofrecer reintento (defecto: `120`) | `300` |
+| `TELEGRAM_SENSITIVITY` | No | Modo de filtrado: `all`, `smart`, o `critical` (defecto: `smart`) | `smart` |
+| `TELEGRAM_LOCAL_DELAY` | No | Segundos del popup PC (`0` = desactivar, defecto: `30`) | `30` |
+| `TELEGRAM_PERMISSION_TIMEOUT` | No | Segundos de espera en Telegram antes de ofrecer reintento (defecto: `300`) | `300` |
 | `TELEGRAM_MAX_RETRIES` | No | Cuantas veces ofrecer el boton Reintentar tras timeout (defecto: `2`) | `3` |
 | `TELEGRAM_FALLBACK_ON_ERROR` | No | Que hacer si el hook falla: `allow` o `deny` (defecto: `allow`) | `deny` |
 | `TELEGRAM_HOOK_LOG` | No | Ruta al archivo de log para depuracion | `/tmp/telegram_claude_hook.log` |
@@ -388,7 +493,25 @@ Primero te llegan recordatorios a los 60 y 90 segundos (tu movil vuelve a vibrar
 <details>
 <summary><strong>Puedo hacer que ciertas herramientas se aprueben automaticamente?</strong></summary>
 
-Si. Cambia el `"matcher"` en tu `settings.json` para que solo intercepte las herramientas que quieras. Por ejemplo, `"Bash"` para solo comandos de terminal. Las herramientas de solo lectura (Read, Glob, Grep) puedes auto-aprobarlas directamente en los permisos de Claude Code sin pasar por Telegram.
+Si, y con v0.4.0 el hook lo hace automaticamente. Con `TELEGRAM_SENSITIVITY="smart"` (el defecto), las herramientas seguras como `Read`, `Glob`, `Grep`, `ls`, `cat` y `git status` se auto-aprueban sin notificacion. Tambien puedes usar el `"matcher"` en `settings.json` para control adicional.
+</details>
+
+<details>
+<summary><strong>Cual es la diferencia entre `smart` y `critical`?</strong></summary>
+
+En modo `smart`, todo lo que no sea explicitamente seguro necesita aprobacion (conservador). En modo `critical`, todo lo que no sea explicitamente peligroso se auto-aprueba (permisivo). Usa `smart` para trabajo diario, `critical` cuando confias en tu IA y quieres minimas interrupciones.
+</details>
+
+<details>
+<summary><strong>Puedo desactivar el popup del PC?</strong></summary>
+
+Si. Pon `TELEGRAM_LOCAL_DELAY=0` y todas las operaciones peligrosas van directamente a Telegram sin popup.
+</details>
+
+<details>
+<summary><strong>Funciona el dialogo local por SSH?</strong></summary>
+
+No. El dialogo local necesita pantalla grafica (WSL2 con escritorio Windows, Linux con X11/Wayland, o macOS). Por SSH sin forwarding de display, salta automaticamente a Telegram.
 </details>
 
 <details>

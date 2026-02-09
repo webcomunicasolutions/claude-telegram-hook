@@ -1,25 +1,66 @@
 #!/bin/bash
 # =============================================================================
-# hook_permission_telegram.sh - Approve/reject Claude Code permissions from Telegram
+# hook_permission_telegram.sh - Smart filtering + optional Telegram for Claude Code
 # =============================================================================
-# Replaces the terminal permission dialog with Telegram inline buttons.
-# When Claude Code needs permission, it sends a message to Telegram and
-# waits for your response (button tap or text reply).
+# PreToolUse hook with intelligent risk classification.
 #
-# Event: PermissionRequest
+# Flow:
+#   1. Safe operations   -> auto-approve instantly (no prompt)
+#   2. Dangerous operations -> depends on mode:
+#      - Terminal only (default): passthrough to Claude's normal y/n prompt
+#      - Terminal + Telegram: terminal prompt + background Telegram escalation
+#      - Telegram only: blocking Telegram with buttons (classic v0.3 behavior)
+#
+# Telegram mode is controlled by a flag file:
+#   Enable:  echo 120 > /tmp/claude_telegram_active   (120 = delay seconds)
+#   Disable: rm -f /tmp/claude_telegram_active
+#
+# When in tmux + Telegram enabled: terminal prompt first, Telegram after delay,
+# tmux send-keys bridges the response back to terminal.
+# When NOT in tmux + Telegram enabled: blocking Telegram (no terminal prompt).
+#
+# Sensitivity modes (TELEGRAM_SENSITIVITY):
+#   all      - Everything is "dangerous" (no auto-approve)
+#   smart    - Auto-approve safe ops, prompt for dangerous (default)
+#   critical - Only the most dangerous ops trigger prompt
+#
 # Requirements: curl, jq
+# Optional: tmux (for terminal+Telegram hybrid mode)
 # =============================================================================
 
 # --- Configuration ---
-BOT_TOKEN="${TELEGRAM_BOT_TOKEN:?ERROR: Set TELEGRAM_BOT_TOKEN environment variable}"
-CHAT_ID="${TELEGRAM_CHAT_ID:?ERROR: Set TELEGRAM_CHAT_ID environment variable}"
-PERMISSION_TIMEOUT="${TELEGRAM_PERMISSION_TIMEOUT:-120}"
+BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+CHAT_ID="${TELEGRAM_CHAT_ID:-}"
+PERMISSION_TIMEOUT="${TELEGRAM_PERMISSION_TIMEOUT:-300}"
 POLL_TIMEOUT=10
 FALLBACK_ON_ERROR="${TELEGRAM_FALLBACK_ON_ERROR:-allow}"
 LOG_FILE="${TELEGRAM_HOOK_LOG:-/tmp/telegram_claude_hook.log}"
-TELEGRAM_API="https://api.telegram.org/bot${BOT_TOKEN}"
+SENSITIVITY="${TELEGRAM_SENSITIVITY:-smart}"
+MAX_RETRIES="${TELEGRAM_MAX_RETRIES:-2}"
 
-# --- Functions ---
+# Telegram mode flag file
+TELEGRAM_FLAG="/tmp/claude_telegram_active"
+
+# Determine Telegram mode
+TELEGRAM_ENABLED=false
+TELEGRAM_DELAY=120
+if [ -f "$TELEGRAM_FLAG" ]; then
+    TELEGRAM_ENABLED=true
+    TELEGRAM_DELAY=$(cat "$TELEGRAM_FLAG" 2>/dev/null | tr -d '[:space:]')
+    # Default to 120 if file is empty or not a number
+    if ! [ "$TELEGRAM_DELAY" -gt 0 ] 2>/dev/null; then
+        TELEGRAM_DELAY=120
+    fi
+fi
+
+# Only set API URL if bot token is available
+if [ -n "$BOT_TOKEN" ]; then
+    TELEGRAM_API="https://api.telegram.org/bot${BOT_TOKEN}"
+fi
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
 
 log() {
     if [ -n "$LOG_FILE" ]; then
@@ -42,24 +83,200 @@ respond() {
     if [ "$decision" = "allow" ]; then
         jq -n '{
             hookSpecificOutput: {
-                hookEventName: "PermissionRequest",
-                decision: { behavior: "allow" }
+                hookEventName: "PreToolUse",
+                permissionDecision: "allow"
             }
         }'
     else
         jq -n --arg msg "$message" '{
             hookSpecificOutput: {
-                hookEventName: "PermissionRequest",
-                decision: { behavior: "deny", message: $msg }
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+                permissionDecisionReason: $msg
             }
         }'
     fi
 }
 
+# =============================================================================
+# SMART FILTERING - Risk classification
+# =============================================================================
+
+is_safe_bash_command() {
+    local cmd="$1"
+    local first_word
+    first_word=$(echo "$cmd" | awk '{print $1}')
+    first_word=$(basename "$first_word" 2>/dev/null || echo "$first_word")
+
+    case "$first_word" in
+        ls|cat|head|tail|wc|file|stat|du|df|free|uptime|uname|hostname|whoami|id|date|cal)
+            return 0 ;;
+        grep|rg|find|locate|which|whereis|type|awk|sed|sort|uniq|cut|tr|tee|diff|comm|paste)
+            return 0 ;;
+        echo|printf|true|false|test|expr)
+            return 0 ;;
+        jq|yq|xmllint|csvtool)
+            return 0 ;;
+        ps|top|htop|pgrep|lsof|ss|netstat|ip|ifconfig|ping|dig|nslookup|host|traceroute)
+            return 0 ;;
+        touch|mkdir|cp|mv|ln|tree|realpath|dirname|basename|readlink)
+            return 0 ;;
+        env|printenv|set|declare|alias|history|pwd)
+            return 0 ;;
+        npm)
+            local sub=$(echo "$cmd" | awk '{print $2}')
+            case "$sub" in
+                list|ls|info|view|outdated|help|config|version|prefix|root|bin|pack) return 0 ;;
+                *) return 1 ;;
+            esac ;;
+        pip|pip3)
+            local sub=$(echo "$cmd" | awk '{print $2}')
+            case "$sub" in
+                list|show|freeze|check|config|help) return 0 ;;
+                *) return 1 ;;
+            esac ;;
+        git)
+            # Scan all words (handles -C /path and other flags before subcmd)
+            local w; for w in $cmd; do
+                case "$w" in status|log|diff|show|branch|tag|remote|stash|describe|shortlog|blame|reflog|rev-parse|ls-files|ls-tree|cat-file|config|version|add|commit) return 0 ;; esac
+            done
+            return 1 ;;
+        python|python3|node)
+            local second=$(echo "$cmd" | awk '{print $2}')
+            case "$second" in
+                --version|-V) return 0 ;;
+                *) return 1 ;;
+            esac ;;
+        curl|wget) return 0 ;;
+        *)
+            return 1 ;;
+    esac
+}
+
+is_dangerous_command() {
+    local cmd="$1"
+    local first_word
+    first_word=$(echo "$cmd" | awk '{print $1}')
+    first_word=$(basename "$first_word" 2>/dev/null || echo "$first_word")
+
+    case "$first_word" in
+        rm|rmdir|shred) return 0 ;;
+        sudo|su|doas) return 0 ;;
+        chmod|chown|chgrp) return 0 ;;
+        kill|killall|pkill) return 0 ;;
+        systemctl|service|init) return 0 ;;
+        reboot|shutdown|halt|poweroff|mkfs|fdisk|dd|mount|umount) return 0 ;;
+        apt|apt-get|dpkg|yum|dnf|pacman|snap|flatpak|brew) return 0 ;;
+        docker)
+            # Scan all words for dangerous subcommands (handles flags before subcmd)
+            local w; for w in $cmd; do
+                case "$w" in rm|rmi|stop|kill|prune|system) return 0 ;; esac
+            done
+            return 1 ;;
+        git)
+            # Scan all words (handles -C /path and other flags before subcmd)
+            local w; for w in $cmd; do
+                case "$w" in push|reset|rebase|merge|checkout|clean) return 0 ;; esac
+            done
+            return 1 ;;
+        iptables|ufw|firewalld) return 0 ;;
+        crontab) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+has_dangerous_heredoc() {
+    local cmd="$1"
+    if ! echo "$cmd" | grep -qE '<<|python3?\s+-c\s|node\s+-e\s'; then
+        return 1
+    fi
+    local patterns=('os\.remove' 'os\.unlink' 'shutil\.rmtree' 'subprocess' 'os\.system' 'os\.popen' "open\(.*['\"]w['\"]" 'exec\(' 'eval\(' '__import__' 'fs\.unlinkSync' 'fs\.rmdirSync' 'child_process' 'execSync' 'spawn\(')
+    for p in "${patterns[@]}"; do
+        if echo "$cmd" | grep -qE "$p"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+has_dangerous_subcommand() {
+    local cmd="$1"
+    local parts
+    parts=$(echo "$cmd" | sed -E 's/\s*(\|{1,2}|&&|;)\s*/\n/g')
+    while IFS= read -r part; do
+        part=$(echo "$part" | sed 's/^[[:space:]]*//')
+        [ -z "$part" ] && continue
+        if is_dangerous_command "$part"; then
+            return 0
+        fi
+    done <<< "$parts"
+    return 1
+}
+
+touches_sensitive_path() {
+    local file_path="$1"
+    local patterns=('\.env$' '\.env\.' '\.ssh/' 'credentials' 'secrets' '\.secret' '\.key$' '\.pem$' 'id_rsa' 'id_ed25519' 'authorized_keys' 'shadow$' 'passwd$' 'sudoers' 'htpasswd')
+    if echo "$file_path" | grep -qE '^(/etc/|/usr/|/boot/|/sys/|/proc/)'; then
+        return 0
+    fi
+    for p in "${patterns[@]}"; do
+        if echo "$file_path" | grep -qiE "$p"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+classify_risk() {
+    local tool_name="$1"
+    local tool_input="$2"
+
+    if [ "$SENSITIVITY" = "all" ]; then
+        echo "dangerous"
+        return
+    fi
+
+    case "$tool_name" in
+        Read|Glob|Grep|WebFetch|WebSearch|ListMcpResourcesTool|ReadMcpResourceTool)
+            echo "safe"
+            return ;;
+        Bash)
+            local command
+            command=$(echo "$tool_input" | jq -r '.command // ""' 2>/dev/null)
+            [ -z "$command" ] && { echo "dangerous"; return; }
+            if has_dangerous_heredoc "$command"; then
+                log "Heredoc with dangerous content"
+                echo "dangerous"; return
+            fi
+            if has_dangerous_subcommand "$command"; then
+                log "Compound command with dangerous sub-command"
+                echo "dangerous"; return
+            fi
+            if is_dangerous_command "$command"; then
+                echo "dangerous"; return
+            fi
+            echo "safe"; return ;;
+        Write|Edit|NotebookEdit)
+            local file_path
+            file_path=$(echo "$tool_input" | jq -r '.file_path // .notebook_path // ""' 2>/dev/null)
+            if touches_sensitive_path "$file_path"; then
+                echo "dangerous"; return
+            fi
+            echo "safe"; return ;;
+        Task)
+            echo "safe"; return ;;
+        *)
+            echo "safe"; return ;;
+    esac
+}
+
+# =============================================================================
+# TELEGRAM FUNCTIONS
+# =============================================================================
+
 send_telegram_with_buttons() {
     local text="$1"
     local response
-
     response=$(curl -s -X POST "${TELEGRAM_API}/sendMessage" \
         -H "Content-Type: application/json" \
         -d "$(jq -n \
@@ -71,25 +288,15 @@ send_telegram_with_buttons() {
                 parse_mode: "HTML",
                 reply_markup: {
                     inline_keyboard: [[
-                        { text: "✅ Allow", callback_data: "allow" },
-                        { text: "❌ Deny", callback_data: "deny" }
+                        { text: "\u2705 Allow", callback_data: "allow" },
+                        { text: "\u274c Deny", callback_data: "deny" }
                     ]]
                 }
             }'
         )" 2>/dev/null)
-
     local ok
     ok=$(echo "$response" | jq -r '.ok' 2>/dev/null)
-
-    if [ "$ok" = "true" ]; then
-        log "Message with buttons sent to Telegram"
-        return 0
-    else
-        local error
-        error=$(echo "$response" | jq -r '.description // "Unknown error"' 2>/dev/null)
-        log "Error sending to Telegram: $error"
-        return 1
-    fi
+    [ "$ok" = "true" ]
 }
 
 send_telegram() {
@@ -112,10 +319,8 @@ answer_callback() {
 get_latest_offset() {
     local response
     response=$(curl -s "${TELEGRAM_API}/getUpdates?offset=-1&limit=1" 2>/dev/null)
-
     local update_id
     update_id=$(echo "$response" | jq -r '.result[-1].update_id // empty' 2>/dev/null)
-
     if [ -n "$update_id" ]; then
         echo $((update_id + 1))
     else
@@ -127,9 +332,6 @@ wait_for_response() {
     local offset="$1"
     local timeout="$2"
     local elapsed=0
-
-    # Reminders at halfway and 30s before timeout
-    # For 120s: reminders at 60s and 90s
     local reminder_1=$((timeout / 2))
     local reminder_2=$((timeout - 30))
     local sent_r1=0 sent_r2=0
@@ -137,25 +339,19 @@ wait_for_response() {
     while [ $elapsed -lt $timeout ]; do
         local remaining=$((timeout - elapsed))
         local this_poll=$POLL_TIMEOUT
-        if [ $remaining -lt $this_poll ]; then
-            this_poll=$remaining
-        fi
+        [ $remaining -lt $this_poll ] && this_poll=$remaining
 
-        # Send reminders
         if [ $sent_r1 -eq 0 ] && [ $elapsed -ge $reminder_1 ]; then
             send_telegram "⏰ ${remaining}s left to respond"
-            log "Reminder 1 sent (${remaining}s remaining)"
             sent_r1=1
         fi
         if [ $sent_r2 -eq 0 ] && [ $elapsed -ge $reminder_2 ]; then
             send_telegram "🚨 Last ${remaining}s!"
-            log "Reminder 2 sent (${remaining}s remaining)"
             sent_r2=1
         fi
 
         local response
         response=$(curl -s "${TELEGRAM_API}/getUpdates?offset=${offset}&timeout=${this_poll}&limit=1" 2>/dev/null)
-
         elapsed=$((elapsed + this_poll))
 
         local result_count
@@ -164,146 +360,79 @@ wait_for_response() {
         if [ "$result_count" -gt 0 ] 2>/dev/null; then
             local update_id
             update_id=$(echo "$response" | jq -r '.result[0].update_id // empty' 2>/dev/null)
+            [ -n "$update_id" ] && offset=$((update_id + 1))
 
-            if [ -n "$update_id" ]; then
-                offset=$((update_id + 1))
-            fi
-
-            # Case 1: Inline button pressed (callback_query)
             local callback_data callback_id callback_from
             callback_data=$(echo "$response" | jq -r '.result[0].callback_query.data // empty' 2>/dev/null)
             callback_id=$(echo "$response" | jq -r '.result[0].callback_query.id // empty' 2>/dev/null)
             callback_from=$(echo "$response" | jq -r '.result[0].callback_query.from.id // empty' 2>/dev/null)
 
             if [ -n "$callback_data" ]; then
-                if [ "$callback_from" != "$CHAT_ID" ]; then
-                    log "Callback ignored from unauthorized user: $callback_from"
-                    continue
-                fi
-
+                [ "$callback_from" != "$CHAT_ID" ] && continue
                 answer_callback "$callback_id" "Received"
                 curl -s "${TELEGRAM_API}/getUpdates?offset=${offset}" >/dev/null 2>&1
-
                 echo "$callback_data"
                 return 0
             fi
 
-            # Case 2: Text message (fallback compatibility)
             local text from_id
             text=$(echo "$response" | jq -r '.result[0].message.text // empty' 2>/dev/null)
             from_id=$(echo "$response" | jq -r '.result[0].message.from.id // empty' 2>/dev/null)
 
             if [ -n "$text" ]; then
-                if [ "$from_id" != "$CHAT_ID" ]; then
-                    log "Message ignored from unauthorized user: $from_id"
-                    continue
-                fi
-
+                [ "$from_id" != "$CHAT_ID" ] && continue
                 curl -s "${TELEGRAM_API}/getUpdates?offset=${offset}" >/dev/null 2>&1
-
                 echo "$text"
                 return 0
             fi
         fi
     done
-
     return 1
 }
 
 parse_user_response() {
     local response="$1"
-
-    # Direct from inline button
     if [ "$response" = "allow" ] || [ "$response" = "deny" ]; then
-        echo "$response"
-        return 0
+        echo "$response"; return 0
     fi
-
-    # Text message normalization
     local normalized
     normalized=$(echo "$response" | tr '[:upper:]' '[:lower:]' | xargs)
-
     case "$normalized" in
-        si|sí|s|yes|y|ok|dale|vale|adelante|apruebo|aprobar|approve|go|1)
-            echo "allow"
-            return 0
-            ;;
-        no|n|cancelar|cancel|rechazar|rechazado|deny|nope|0)
-            echo "deny"
-            return 0
-            ;;
-        *)
-            echo "unknown"
-            return 1
-            ;;
+        si|sí|s|yes|y|ok|dale|vale|adelante|apruebo|aprobar|approve|go|1) echo "allow"; return 0 ;;
+        no|n|cancelar|cancel|rechazar|rechazado|deny|nope|0) echo "deny"; return 0 ;;
+        *) echo "unknown"; return 1 ;;
     esac
 }
 
 build_permission_message() {
     local tool_name="$1"
     local tool_input="$2"
-
     local message="<b>Claude Code needs permission</b>"$'\n\n'
-
     case "$tool_name" in
         Bash)
             local command
             command=$(echo "$tool_input" | jq -r '.command // "unknown"' 2>/dev/null)
             command=$(escape_html "$command")
             message+="<b>Tool:</b> Bash"$'\n'
-            message+="<b>Command:</b>"$'\n'"<code>${command}</code>"$'\n'
-            ;;
+            message+="<b>Command:</b>"$'\n'"<code>${command}</code>"$'\n' ;;
         Write)
-            local file_path
-            file_path=$(echo "$tool_input" | jq -r '.file_path // "unknown"' 2>/dev/null)
-            file_path=$(escape_html "$file_path")
-            message+="<b>Tool:</b> Write (create file)"$'\n'
-            message+="<b>File:</b> <code>${file_path}</code>"$'\n'
-            ;;
+            local fp=$(echo "$tool_input" | jq -r '.file_path // "unknown"' 2>/dev/null)
+            message+="<b>Tool:</b> Write"$'\n'"<b>File:</b> <code>$(escape_html "$fp")</code>"$'\n' ;;
         Edit)
-            local file_path
-            file_path=$(echo "$tool_input" | jq -r '.file_path // "unknown"' 2>/dev/null)
-            file_path=$(escape_html "$file_path")
-            message+="<b>Tool:</b> Edit"$'\n'
-            message+="<b>File:</b> <code>${file_path}</code>"$'\n'
-            ;;
-        WebFetch)
-            local url
-            url=$(echo "$tool_input" | jq -r '.url // "unknown"' 2>/dev/null)
-            url=$(escape_html "$url")
-            message+="<b>Tool:</b> WebFetch"$'\n'
-            message+="<b>URL:</b> <code>${url}</code>"$'\n'
-            ;;
-        WebSearch)
-            local query
-            query=$(echo "$tool_input" | jq -r '.query // "unknown"' 2>/dev/null)
-            query=$(escape_html "$query")
-            message+="<b>Tool:</b> WebSearch"$'\n'
-            message+="<b>Query:</b> <code>${query}</code>"$'\n'
-            ;;
+            local fp=$(echo "$tool_input" | jq -r '.file_path // "unknown"' 2>/dev/null)
+            message+="<b>Tool:</b> Edit"$'\n'"<b>File:</b> <code>$(escape_html "$fp")</code>"$'\n' ;;
         *)
-            local safe_name
-            safe_name=$(escape_html "$tool_name")
-            message+="<b>Tool:</b> ${safe_name}"$'\n'
-            local input_preview
-            input_preview=$(echo "$tool_input" | jq -c '.' 2>/dev/null | head -c 200)
-            input_preview=$(escape_html "$input_preview")
-            if [ -n "$input_preview" ]; then
-                message+="<b>Detail:</b> <code>${input_preview}</code>"$'\n'
-            fi
-            ;;
+            message+="<b>Tool:</b> $(escape_html "$tool_name")"$'\n'
+            local preview=$(echo "$tool_input" | jq -c '.' 2>/dev/null | head -c 200)
+            [ -n "$preview" ] && message+="<b>Detail:</b> <code>$(escape_html "$preview")</code>"$'\n' ;;
     esac
-
     message+=$'\n'"<i>Timeout: ${PERMISSION_TIMEOUT}s</i>"
-
     echo "$message"
 }
 
 send_retry_button() {
     local text="$1"
-    local response
-
-    response=$(curl -s -X POST "${TELEGRAM_API}/sendMessage" \
+    curl -s -X POST "${TELEGRAM_API}/sendMessage" \
         -H "Content-Type: application/json" \
         -d "$(jq -n \
             --arg chat_id "$CHAT_ID" \
@@ -319,135 +448,230 @@ send_retry_button() {
                     ]]
                 }
             }'
-        )" 2>/dev/null)
-
-    local ok
-    ok=$(echo "$response" | jq -r '.ok' 2>/dev/null)
-    [ "$ok" = "true" ]
+        )" >/dev/null 2>&1
 }
 
-# Maximum number of retry rounds (to prevent infinite loops)
-MAX_RETRIES="${TELEGRAM_MAX_RETRIES:-2}"
+# =============================================================================
+# TELEGRAM BLOCKING FLOW (classic v0.3 - used when not in tmux)
+# =============================================================================
 
-# --- Main ---
+run_telegram_blocking() {
+    local tool_name="$1"
+    local tool_input="$2"
 
-log "=== Hook PermissionRequest started ==="
+    local permission_msg
+    permission_msg=$(build_permission_message "$tool_name" "$tool_input")
 
+    local retry_count=0
+
+    while true; do
+        local offset
+        offset=$(get_latest_offset)
+        log "Offset: $offset (attempt $((retry_count + 1)))"
+
+        if ! send_telegram_with_buttons "$permission_msg"; then
+            log "ERROR: Could not send to Telegram"
+            respond "$FALLBACK_ON_ERROR" "Could not reach Telegram"
+            return
+        fi
+
+        log "Waiting for Telegram response (timeout: ${PERMISSION_TIMEOUT}s)..."
+        local user_response
+        user_response=$(wait_for_response "$offset" "$PERMISSION_TIMEOUT")
+
+        if [ $? -ne 0 ]; then
+            if [ $retry_count -lt $MAX_RETRIES ]; then
+                retry_count=$((retry_count + 1))
+                offset=$(get_latest_offset)
+                send_retry_button "⏰ <b>Timed out</b>. Tap <b>Retry</b> or <b>Deny</b>. <i>($retry_count/$MAX_RETRIES)</i>"
+                local retry_resp
+                retry_resp=$(wait_for_response "$offset" 60)
+                if [ $? -eq 0 ] && [ "$retry_resp" = "retry" ]; then
+                    send_telegram "🔄 Resending..."
+                    continue
+                elif [ "$retry_resp" = "deny" ]; then
+                    send_telegram "Action denied"
+                    respond "deny" "Denied from retry prompt"
+                    return
+                fi
+            fi
+            send_telegram "Timeout. Action denied."
+            respond "deny" "Timeout after retries"
+            return
+        fi
+
+        log "User response: $user_response"
+        local decision
+        decision=$(parse_user_response "$user_response")
+
+        case "$decision" in
+            allow) send_telegram "Action allowed"; respond "allow" ;;
+            deny)  send_telegram "Action denied";  respond "deny" "Denied from Telegram" ;;
+            *)     send_telegram "Unknown response. Denied."; respond "deny" "Unknown: $user_response" ;;
+        esac
+        return
+    done
+}
+
+# =============================================================================
+# TMUX TELEGRAM ESCALATOR (background - used when in tmux)
+# =============================================================================
+
+start_tmux_escalator() {
+    local tool_name="$1"
+    local tool_input="$2"
+    local delay="$3"
+
+    (
+        exec 2>>"$LOG_FILE"
+        log "[BG] Tmux escalator started (delay: ${delay}s, PID: $$)"
+
+        sleep "$delay"
+
+        log "[BG] Delay elapsed, sending to Telegram"
+        local permission_msg
+        permission_msg=$(build_permission_message "$tool_name" "$tool_input")
+
+        if ! send_telegram_with_buttons "$permission_msg"; then
+            log "[BG] ERROR: Could not send to Telegram"
+            exit 1
+        fi
+
+        local offset
+        offset=$(get_latest_offset)
+
+        local remaining=$((PERMISSION_TIMEOUT - delay))
+        [ $remaining -lt 30 ] && remaining=30
+
+        local user_response
+        user_response=$(wait_for_response "$offset" "$remaining")
+
+        if [ $? -ne 0 ]; then
+            log "[BG] Timeout waiting for Telegram response"
+            send_telegram "No response. Check the terminal."
+            exit 1
+        fi
+
+        local decision
+        decision=$(parse_user_response "$user_response")
+        log "[BG] Telegram response: $decision"
+
+        # Find tmux pane and send keystroke
+        local target_pane
+        target_pane=$(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_current_command}' 2>/dev/null \
+            | grep -iE "node|claude" \
+            | head -1 \
+            | cut -d' ' -f1)
+
+        if [ -z "$target_pane" ]; then
+            target_pane=$(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null | head -1)
+        fi
+
+        if [ -n "$target_pane" ]; then
+            case "$decision" in
+                allow)
+                    send_telegram "Approved. Sending to terminal..."
+                    log "[BG] Sending 'y' to tmux pane: $target_pane"
+                    tmux send-keys -t "$target_pane" "y" Enter
+                    ;;
+                deny)
+                    send_telegram "Denied. Sending to terminal..."
+                    log "[BG] Sending 'n' to tmux pane: $target_pane"
+                    tmux send-keys -t "$target_pane" "n" Enter
+                    ;;
+                *)
+                    send_telegram "Unknown response. Check terminal."
+                    ;;
+            esac
+        else
+            log "[BG] ERROR: No tmux pane found"
+            send_telegram "Could not find terminal. Respond manually."
+        fi
+
+        log "[BG] Escalator done"
+    ) &>/dev/null &
+    disown $!
+    log "Background tmux escalator started (PID: $!, delay: ${delay}s)"
+}
+
+# =============================================================================
+# MAIN
+# =============================================================================
+# Flow:
+#   1. Parse input, classify risk
+#   2. Safe -> auto-approve
+#   3. Dangerous + no Telegram -> passthrough (terminal prompt only)
+#   4. Dangerous + Telegram + tmux -> passthrough + background escalator
+#   5. Dangerous + Telegram + no tmux -> blocking Telegram (v0.3 style)
+# =============================================================================
+
+log "=== Hook started (sensitivity=$SENSITIVITY, telegram=$TELEGRAM_ENABLED, delay=$TELEGRAM_DELAY) ==="
+
+# Check dependencies
 if ! command -v jq &>/dev/null; then
     log "ERROR: jq not installed"
     respond "$FALLBACK_ON_ERROR" "jq not installed"
     exit 0
 fi
-
 if ! command -v curl &>/dev/null; then
     log "ERROR: curl not installed"
     respond "$FALLBACK_ON_ERROR" "curl not installed"
     exit 0
 fi
 
+# Read input
 INPUT=$(cat)
 log "Input: $INPUT"
 
 if ! echo "$INPUT" | jq . >/dev/null 2>&1; then
-    log "ERROR: Invalid JSON input"
-    respond "$FALLBACK_ON_ERROR" "Invalid JSON input"
+    log "ERROR: Invalid JSON"
+    respond "$FALLBACK_ON_ERROR" "Invalid JSON"
     exit 0
 fi
 
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "unknown"')
 TOOL_INPUT=$(echo "$INPUT" | jq -c '.tool_input // {}')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "no-session"')
 
-log "Tool: $TOOL_NAME | Session: $SESSION_ID"
+log "Tool: $TOOL_NAME"
 
-PERMISSION_MSG=$(build_permission_message "$TOOL_NAME" "$TOOL_INPUT")
+# --- Step 1: Smart filtering ---
+RISK=$(classify_risk "$TOOL_NAME" "$TOOL_INPUT")
+log "Risk: $RISK"
 
-RETRY_COUNT=0
+if [ "$RISK" = "safe" ]; then
+    log "Auto-approved (safe)"
+    respond "allow"
+    exit 0
+fi
 
-while true; do
-    OFFSET=$(get_latest_offset)
-    log "Offset: $OFFSET (attempt $((RETRY_COUNT + 1)))"
+# --- Step 2: Dangerous operation ---
+log "Dangerous operation detected"
 
-    if [ $RETRY_COUNT -eq 0 ]; then
-        if ! send_telegram_with_buttons "$PERMISSION_MSG"; then
-            log "ERROR: Could not send to Telegram, using fallback policy"
-            respond "$FALLBACK_ON_ERROR" "Could not reach Telegram"
-            exit 0
-        fi
-    else
-        if ! send_telegram_with_buttons "$PERMISSION_MSG"; then
-            log "ERROR: Could not resend to Telegram"
-            respond "deny" "Could not reach Telegram on retry"
-            exit 0
-        fi
-        log "Permission message resent (retry $RETRY_COUNT)"
-    fi
+# MODE 1: Terminal only (no Telegram)
+if [ "$TELEGRAM_ENABLED" != "true" ]; then
+    log "Terminal only mode - passthrough"
+    log "=== Hook passthrough (terminal prompt) ==="
+    exit 0
+fi
 
-    log "Waiting for response (timeout: ${PERMISSION_TIMEOUT}s)..."
-    USER_RESPONSE=$(wait_for_response "$OFFSET" "$PERMISSION_TIMEOUT")
+# Check Telegram credentials
+if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+    log "ERROR: Telegram credentials missing, falling back to terminal"
+    exit 0
+fi
 
-    if [ $? -ne 0 ]; then
-        # Timeout - offer retry if under the limit
-        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-            log "Timeout: offering retry ($((RETRY_COUNT + 1))/$MAX_RETRIES)"
-            RETRY_COUNT=$((RETRY_COUNT + 1))
+# MODE 2: Terminal + Telegram (tmux available)
+if command -v tmux &>/dev/null && tmux list-sessions &>/dev/null 2>&1; then
+    log "Hybrid mode: terminal + Telegram via tmux (delay: ${TELEGRAM_DELAY}s)"
+    start_tmux_escalator "$TOOL_NAME" "$TOOL_INPUT" "$TELEGRAM_DELAY"
+    # Exit with no output -> Claude shows terminal prompt
+    log "=== Hook passthrough (terminal prompt + tmux escalator) ==="
+    exit 0
+fi
 
-            OFFSET=$(get_latest_offset)
-            send_retry_button "⏰ <b>Timed out</b> waiting for response.
+# MODE 3: Telegram only (no tmux, blocking)
+log "Blocking Telegram mode (no tmux available)"
+run_telegram_blocking "$TOOL_NAME" "$TOOL_INPUT"
 
-Tap <b>Retry</b> to get the permission request again, or <b>Deny</b> to reject it.
-
-<i>Retry $RETRY_COUNT of $MAX_RETRIES</i>"
-
-            # Wait 60 seconds for the retry button
-            RETRY_RESPONSE=$(wait_for_response "$OFFSET" 60)
-
-            if [ $? -eq 0 ] && [ "$RETRY_RESPONSE" = "retry" ]; then
-                log "User requested retry"
-                send_telegram "🔄 Resending permission request..."
-                continue
-            elif [ "$RETRY_RESPONSE" = "deny" ]; then
-                log "User denied from retry prompt"
-                send_telegram "Action denied"
-                respond "deny" "User denied from Telegram (retry prompt)"
-                exit 0
-            else
-                log "No retry response, denying"
-                send_telegram "No response to retry prompt. Action denied."
-                respond "deny" "Timeout: no response after retry prompt"
-                exit 0
-            fi
-        else
-            log "Timeout: max retries ($MAX_RETRIES) reached"
-            send_telegram "Timeout: max retries reached. Action denied."
-            respond "deny" "Timeout after $MAX_RETRIES retries"
-            exit 0
-        fi
-    fi
-
-    # Got a response - process it
-    log "User response: $USER_RESPONSE"
-    DECISION=$(parse_user_response "$USER_RESPONSE")
-
-    case "$DECISION" in
-        allow)
-            log "Decision: ALLOWED"
-            send_telegram "Action allowed"
-            respond "allow"
-            ;;
-        deny)
-            log "Decision: DENIED"
-            send_telegram "Action denied"
-            respond "deny" "User denied from Telegram"
-            ;;
-        unknown)
-            log "Decision: UNKNOWN ($USER_RESPONSE), denying for safety"
-            send_telegram "Unrecognized response: '${USER_RESPONSE}'. Denied for safety."
-            respond "deny" "Unrecognized response: ${USER_RESPONSE}"
-            ;;
-    esac
-    break
-done
-
-log "=== Hook PermissionRequest finished ==="
+log "=== Hook finished ==="
 exit 0

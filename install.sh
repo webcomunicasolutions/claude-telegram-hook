@@ -173,6 +173,55 @@ ask_telegram_config() {
     info "Chat ID:   $CHAT_ID"
 }
 
+ask_sensitivity_config() {
+    step "Smart filtering configuration"
+    echo ""
+    echo -e "${DIM}  Smart filtering auto-approves safe operations (ls, cat, git status...)${NC}"
+    echo -e "${DIM}  and only sends dangerous ones (rm, sudo, git push...) to Telegram.${NC}"
+    echo ""
+    echo -e "  ${BOLD}1)${NC} ${GREEN}smart${NC} (recommended) -- Auto-approve safe, Telegram for dangerous"
+    echo -e "  ${BOLD}2)${NC} ${YELLOW}critical${NC} -- Only the most destructive ops go to Telegram"
+    echo -e "  ${BOLD}3)${NC} ${RED}all${NC} -- Everything goes to Telegram (v0.3 behavior)"
+    echo ""
+
+    while true; do
+        read -rp "$(echo -e "${BOLD}  Choose [1/2/3] (default: 1): ${NC}")" sensitivity_choice
+        case "${sensitivity_choice:-1}" in
+            1) SENSITIVITY_MODE="smart"; break ;;
+            2) SENSITIVITY_MODE="critical"; break ;;
+            3) SENSITIVITY_MODE="all"; break ;;
+            *) warn "Please enter 1, 2, or 3." ;;
+        esac
+    done
+
+    success "Sensitivity mode: $SENSITIVITY_MODE"
+}
+
+ask_local_dialog_config() {
+    step "Dangerous operations behavior"
+    echo ""
+    echo -e "${DIM}  When a dangerous operation is detected, you can choose how to handle it:${NC}"
+    echo ""
+    echo -e "  ${BOLD}1) Terminal (default)${NC} - Claude Code asks you in the conversation"
+    echo -e "  ${BOLD}2) PC popup + Telegram${NC} - Native popup on PC, then Telegram if no response"
+    echo -e "     WSL2: Windows popup | Linux: zenity | macOS: osascript"
+    echo ""
+
+    read -rp "$(echo -e "${BOLD}  Choice [1/2] (default: 1): ${NC}")" dialog_choice
+    if [[ "$dialog_choice" == "2" ]]; then
+        read -rp "$(echo -e "${BOLD}  Popup timeout in seconds (default: 30): ${NC}")" local_timeout
+        LOCAL_DELAY_VALUE="${local_timeout:-30}"
+        if ! [[ "$LOCAL_DELAY_VALUE" =~ ^[0-9]+$ ]]; then
+            warn "Invalid number, using default (30)"
+            LOCAL_DELAY_VALUE=30
+        fi
+        success "PC popup enabled (${LOCAL_DELAY_VALUE}s), then Telegram on timeout"
+    else
+        LOCAL_DELAY_VALUE=0
+        success "Dangerous operations will be handled in the terminal"
+    fi
+}
+
 # --- Installation Steps ---
 
 create_directories() {
@@ -237,8 +286,18 @@ create_env_file() {
 export TELEGRAM_BOT_TOKEN="$BOT_TOKEN"
 export TELEGRAM_CHAT_ID="$CHAT_ID"
 
-# Optional: timeout in seconds for permission requests (default: 120)
-# export TELEGRAM_PERMISSION_TIMEOUT="120"
+# Smart filtering: all | smart | critical (default: smart)
+# - all: every permission goes to Telegram (v0.3 behavior)
+# - smart: auto-approves safe commands, Telegram for dangerous ones
+# - critical: only the most destructive operations go to Telegram
+export TELEGRAM_SENSITIVITY="${SENSITIVITY_MODE:-smart}"
+
+# Local dialog timeout in seconds (0 = terminal prompt, N>0 = popup then Telegram)
+# Shows a native popup on your PC before escalating to Telegram
+export TELEGRAM_LOCAL_DELAY="${LOCAL_DELAY_VALUE:-0}"
+
+# Timeout in seconds for Telegram permission requests (default: 300)
+# export TELEGRAM_PERMISSION_TIMEOUT="300"
 ENVEOF
 
     chmod 600 "$ENV_FILE"
@@ -482,13 +541,21 @@ print_summary() {
     echo -e "    Environment:    ${CYAN}$ENV_FILE${NC}"
     echo -e "    Settings:       ${CYAN}$SETTINGS_FILE${NC}"
     echo ""
+    echo -e "  ${BOLD}Smart filtering:${NC}"
+    echo -e "    Sensitivity: ${CYAN}${SENSITIVITY_MODE:-smart}${NC}"
+    if [ "${LOCAL_DELAY_VALUE:-0}" -gt 0 ] 2>/dev/null; then
+        echo -e "    Dangerous ops: ${CYAN}PC popup (${LOCAL_DELAY_VALUE}s) -> Telegram${NC}"
+    else
+        echo -e "    Dangerous ops: ${CYAN}Terminal prompt${NC}"
+    fi
+    echo ""
     echo -e "  ${BOLD}Next steps:${NC}"
     echo -e "    ${YELLOW}1.${NC} Restart Claude Code for the hook to take effect."
-    echo -e "    ${YELLOW}2.${NC} When Claude Code needs permission, check Telegram."
-    echo -e "    ${YELLOW}3.${NC} Press the inline buttons or type si/no to respond."
+    echo -e "    ${YELLOW}2.${NC} Safe operations (ls, cat, git status) are auto-approved."
+    echo -e "    ${YELLOW}3.${NC} Dangerous operations are handled per your configuration above."
     echo ""
     echo -e "  ${BOLD}Configuration:${NC}"
-    echo -e "    Edit ${CYAN}$ENV_FILE${NC} to change bot token, chat ID, or timeout."
+    echo -e "    Edit ${CYAN}$ENV_FILE${NC} to change bot token, chat ID, sensitivity, or timeout."
     echo -e "    Edit ${CYAN}$SETTINGS_FILE${NC} to modify hook behavior."
     echo ""
     echo -e "  ${BOLD}Troubleshooting:${NC}"
@@ -605,25 +672,31 @@ main() {
     # Step 3: Get Telegram configuration from user
     ask_telegram_config
 
-    # Step 4: Create directories
+    # Step 4: Smart filtering configuration
+    ask_sensitivity_config
+
+    # Step 5: Local dialog configuration
+    ask_local_dialog_config
+
+    # Step 6: Create directories
     create_directories
 
-    # Step 5: Copy hook script
+    # Step 7: Copy hook script
     copy_hook_script
 
-    # Step 6: Create .env file
+    # Step 8: Create .env file
     create_env_file
 
-    # Step 7: Create wrapper script
+    # Step 9: Create wrapper script
     create_wrapper_script
 
-    # Step 8: Configure settings.json
+    # Step 10: Configure settings.json
     configure_settings
 
-    # Step 9: Test Telegram connection
+    # Step 11: Test Telegram connection
     test_telegram_connection || true
 
-    # Step 10: Print summary
+    # Step 12: Print summary
     print_summary
 }
 

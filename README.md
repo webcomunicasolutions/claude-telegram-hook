@@ -53,6 +53,29 @@ Phone buzzes:
 
 Claude Code keeps working. You keep living.
 
+### With Smart Filtering (v0.4.0)
+
+```
+You: Refactor the auth module and run the tests.
+
+Claude reads 20 files...     (auto-approved, no notification)
+Claude runs `git status`...  (auto-approved, no notification)
+Claude runs `npm test`...    (auto-approved, no notification)
+
+Claude wants to run: git push
+  [PC popup: Yes/No - 30 seconds]
+  *You see the popup on your Windows taskbar, click Yes*
+  Done. No phone needed.
+
+Claude wants to run: rm -rf node_modules && npm install
+  [PC popup: Yes/No - 30 seconds]
+  *You're in the kitchen, popup times out...*
+  [Telegram: Allow/Deny - 5 minutes]
+  *Phone buzzes, tap Allow*
+```
+
+Only dangerous operations bother you. And you answer from wherever you are.
+
 ---
 
 ## What You Need
@@ -194,49 +217,126 @@ Open (or create) `~/.claude/settings.json` and add the hook:
 ## How It Works
 
 ```mermaid
-sequenceDiagram
-    participant CC as Claude Code
-    participant Hook as hook_permission_telegram.sh
-    participant API as Telegram Bot API
-    participant Phone as Your Phone
-
-    CC->>Hook: PermissionRequest event (JSON via stdin)
-    Note over Hook: Parses tool name, command,<br/>file path, or other details
-
-    Hook->>API: sendMessage with inline keyboard<br/>(Allow / Deny buttons)
-    API->>Phone: Push notification
-
-    Note over Phone: You see what Claude wants to do<br/>and tap a button
-
-    Phone->>API: Callback: user tapped "Allow"
-    API->>Hook: getUpdates returns callback data
-
-    alt Allow
-        Hook->>CC: JSON stdout: behavior "allow"
-    else Deny
-        Hook->>CC: JSON stdout: behavior "deny"
-    else No response (timeout)
-        Hook->>Phone: ⏰ "Timed out" + [Retry] [Deny]
-        Phone->>API: Callback: user tapped "Retry"
-        API->>Hook: getUpdates returns "retry"
-        Hook->>API: Resend original permission message
-        API->>Phone: Push notification (second chance)
-    end
+flowchart TD
+    A[Claude Code: PermissionRequest] --> B{Layer 1: Smart Filter}
+    B -->|Safe: ls, cat, git status...| C[Auto-approve]
+    B -->|Dangerous: rm, sudo, git push...| D{Layer 2: Local Dialog}
+    D -->|Yes| E[Allow]
+    D -->|No| F[Deny]
+    D -->|Timeout / No GUI| G{Layer 3: Telegram}
+    G -->|Allow button| E
+    G -->|Deny button| F
+    G -->|Timeout| H{Retry?}
+    H -->|User taps Retry| G
+    H -->|Max retries reached| F
 ```
 
-The entire flow uses Telegram's free Bot API over HTTPS. No webhook server, no open ports, no background processes. The hook script:
+The three-layer flow:
 
-1. **Receives** tool call details from Claude Code via stdin as JSON.
-2. **Formats** a clear message showing the tool name, command, file path, or other relevant context.
-3. **Sends** the message to your Telegram with inline Allow/Deny buttons.
-4. **Reminds** you at 60s and 90s with extra notifications if you haven't responded.
-5. **Offers retry** if the timeout expires -- tap Retry to get the permission request again.
-6. **Returns** the appropriate JSON so Claude Code knows whether to proceed or stop.
+1. **Smart Filter** -- Classifies the operation by risk. Safe operations (`ls`, `cat`, `git status`, `Read`, `Grep`...) are auto-approved instantly. No notification, no delay.
+2. **Local Dialog** -- Dangerous operations show a native popup on your PC (Windows/Linux/macOS). If you respond within the timeout (default 30s), done. No Telegram needed.
+3. **Telegram** -- If the local dialog times out or is unavailable (SSH, no GUI), the request escalates to Telegram with inline Allow/Deny buttons, reminders, and retry mechanism.
+
+---
+
+## Smart Filtering
+
+Not every permission request is equal. `ls -la` is not `rm -rf /`. Smart filtering classifies operations by risk level and only bothers you when it matters.
+
+### Sensitivity Modes
+
+| Mode | Behavior | Use case |
+|------|----------|----------|
+| **`smart`** (default) | Auto-approves safe ops, asks for dangerous ones | Daily development |
+| `critical` | Only the most destructive ops need approval | Experienced users who trust their AI |
+| `all` | Everything goes to Telegram (v0.3 behavior) | Maximum control |
+
+```bash
+export TELEGRAM_SENSITIVITY="smart"  # or "critical" or "all"
+```
+
+### What Gets Auto-Approved (smart mode)
+
+| Category | Examples |
+|----------|---------|
+| File inspection | `ls`, `cat`, `head`, `tail`, `wc`, `file`, `stat` |
+| Search | `grep`, `rg`, `find`, `which` |
+| Git (read-only) | `git status`, `git log`, `git diff`, `git branch` |
+| Package info | `npm list`, `pip list`, `pip freeze` |
+| System info | `ps`, `df`, `free`, `uname`, `whoami` |
+| Data processing | `jq`, `sort`, `uniq`, `cut`, `awk` |
+| Safe tools | Read, Glob, Grep, WebFetch, WebSearch |
+
+### What Needs Approval
+
+| Category | Examples |
+|----------|---------|
+| Destructive | `rm`, `rmdir`, `shred` |
+| Privileged | `sudo`, `chmod`, `chown`, `kill` |
+| System | `systemctl`, `reboot`, `mkfs`, `dd` |
+| Git (write) | `git push`, `git reset`, `git merge`, `git clean` |
+| Packages | `apt install`, `npm install`, `pip install` |
+| Docker | `docker rm`, `docker stop`, `docker prune` |
+| Sensitive files | `.env`, `.ssh/*`, `credentials`, `/etc/*` |
+
+### Compound Commands
+
+Compound commands (`|`, `&&`, `||`, `;`) are analyzed by splitting into parts. If **any** sub-command is dangerous, the entire chain requires approval:
+
+```bash
+git add . && git push    # -> dangerous (git push)
+cat file.txt | grep foo  # -> safe (both safe)
+ls -la && rm temp.txt    # -> dangerous (rm)
+```
+
+### Heredoc / Inline Script Analysis
+
+Python and Node.js inline scripts (`python3 -c "..."`, `python3 << 'EOF'`) are scanned for dangerous patterns like `os.remove`, `subprocess`, `shutil.rmtree`, `fs.unlinkSync`, etc.
+
+---
+
+## Local Dialog (PC-First)
+
+When you're at your PC, you shouldn't have to reach for your phone. The hook can show a **native popup dialog** on your computer first, and only escalate to Telegram if you don't respond.
+
+```
+Dangerous operation detected
+         |
+    [Phase 1: PC]
+    Native popup (Yes/No)
+    Timeout: 30 seconds
+         |
+    Responded -> done
+    Timeout ->
+         |
+    [Phase 2: Telegram]
+    Message with buttons
+    Timeout: 5 minutes
+```
+
+### Platform Support
+
+| Platform | Method | Requirements |
+|----------|--------|-------------|
+| **WSL2** | Windows native popup via `powershell.exe` | None (built-in) |
+| **Linux** | `zenity` dialog | `apt install zenity` |
+| **macOS** | `osascript` dialog | None (built-in) |
+| **No GUI** | Skips to Telegram directly | -- |
+
+### Configuration
+
+```bash
+export TELEGRAM_LOCAL_DELAY=30  # seconds for PC popup (0 = disable)
+```
+
+Set to `0` to skip the local dialog and go straight to Telegram (useful for remote/headless servers).
 
 ---
 
 ## Features
 
+- **Smart filtering** -- Safe operations are auto-approved. Only dangerous ones need your attention.
+- **Local dialog** -- PC popup before Telegram. Answer from your screen without touching your phone.
 - **Phone-based approvals** -- Tap Allow or Deny from anywhere. No terminal needed.
 - **Inline keyboard buttons** -- One tap. No typing.
 - **Rich context** -- See the exact command, file path, or URL before you decide.
@@ -290,19 +390,38 @@ All settings are environment variables with sensible defaults:
 |---|---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Yes | -- | Bot token from @BotFather |
 | `TELEGRAM_CHAT_ID` | Yes | -- | Your Telegram user ID (numeric) |
-| `TELEGRAM_PERMISSION_TIMEOUT` | No | `120` | Seconds to wait for a response before offering retry |
+| `TELEGRAM_SENSITIVITY` | No | `smart` | Filtering mode: `all`, `smart`, or `critical` |
+| `TELEGRAM_LOCAL_DELAY` | No | `30` | Seconds for PC popup dialog (`0` = disable) |
+| `TELEGRAM_PERMISSION_TIMEOUT` | No | `300` | Seconds to wait for Telegram response before offering retry |
 | `TELEGRAM_MAX_RETRIES` | No | `2` | How many times to offer a Retry button after timeout |
 | `TELEGRAM_FALLBACK_ON_ERROR` | No | `allow` | What happens if the hook errors out: `allow` or `deny` |
 | `TELEGRAM_HOOK_LOG` | No | `/tmp/telegram_claude_hook.log` | Log file path. Set to empty string to disable |
 
-### Example: Longer timeout and strict fallback
+### Example: Smart filtering with strict fallback
 
 ```bash
 export TELEGRAM_BOT_TOKEN="7012345678:AAH1bmFnZ2luZy1hLWJvdC10b2tlbi1oZXJl"
 export TELEGRAM_CHAT_ID="123456789"
+export TELEGRAM_SENSITIVITY="smart"
+export TELEGRAM_LOCAL_DELAY="30"
 export TELEGRAM_PERMISSION_TIMEOUT="300"
 export TELEGRAM_FALLBACK_ON_ERROR="deny"
 export TELEGRAM_HOOK_LOG="$HOME/.claude/logs/telegram_hook.log"
+```
+
+### Example: Maximum control (v0.3 behavior)
+
+```bash
+export TELEGRAM_SENSITIVITY="all"     # Everything goes to Telegram
+export TELEGRAM_LOCAL_DELAY="0"       # No PC popup
+export TELEGRAM_PERMISSION_TIMEOUT="120"
+```
+
+### Example: Minimal interruptions
+
+```bash
+export TELEGRAM_SENSITIVITY="critical"  # Only rm, sudo, git push, etc.
+export TELEGRAM_LOCAL_DELAY="15"        # Quick 15s popup
 ```
 
 ---
@@ -430,7 +549,16 @@ A: Yes. Claude Code runs in WSL, which has `curl` and supports `jq`. The hook wo
 A: Telegram allows roughly 30 messages per second per bot. For a single developer approving Claude Code actions, you'll never come close.
 
 **Q: Can I auto-approve certain tools?**
-A: Yes. Change the `"matcher"` in your `settings.json` to only match tools you want Telegram approval for (e.g., `"Bash"` for shell commands only). Read-only tools like `Read`, `Glob`, and `Grep` can be left to the default terminal flow or auto-approved in Claude Code's permissions.
+A: Yes, and with v0.4.0 the hook does this automatically. Set `TELEGRAM_SENSITIVITY="smart"` (the default) and safe tools like `Read`, `Glob`, `Grep`, `ls`, `cat`, and `git status` are auto-approved without any notification. You can also use the `"matcher"` in `settings.json` for additional control.
+
+**Q: What's the difference between `smart` and `critical` sensitivity?**
+A: In `smart` mode, anything not explicitly safe requires approval (conservative). In `critical` mode, anything not explicitly dangerous is auto-approved (permissive). Use `smart` for daily work, `critical` when you trust your AI and want minimal interruptions.
+
+**Q: Can I disable the local PC popup?**
+A: Yes. Set `TELEGRAM_LOCAL_DELAY=0` and all dangerous operations go directly to Telegram without a PC popup.
+
+**Q: Does the local dialog work over SSH?**
+A: No. The local dialog requires a graphical display (WSL2 with Windows desktop, Linux with X11/Wayland, or macOS). Over SSH without display forwarding, it automatically skips to Telegram.
 
 **Q: Can I customize the message format?**
 A: Absolutely. The message template lives inside the hook script. Edit it to change the layout, add timestamps, include session IDs, or anything else you want.
