@@ -6,7 +6,7 @@
 
 # claude-telegram-hook
 
-**Permisos inteligentes para Claude Code. Aprueba desde la terminal o desde el movil.**
+**Deja que Claude Code siga trabajando cuando te levantes. Aprueba comandos peligrosos desde el movil.**
 
 ---
 
@@ -14,13 +14,35 @@
 
 ---
 
-## Por que?
+## El Problema
 
-Claude Code es increible, hasta que pide permiso. Cada comando, cada escritura de archivo, una pausa para escribir `y`. Pero no todas las operaciones merecen una pregunta. `ls -la` no es `rm -rf /`.
+Estas trabajando con Claude Code. Esta creando features, corriendo tests, escribiendo archivos -- todo fluye. Entonces necesitas levantarte. Un cafe, una reunion, comer, lo que sea. Claude sigue trabajando... hasta que necesita ejecutar un comando que requiere tu aprobacion. Y se para. Y espera. Minutos. Horas. Hasta que vuelvas.
 
-**claude-telegram-hook arregla eso.** Las operaciones seguras se ejecutan solas. Las peligrosas te preguntan: en la terminal si estas en el PC, o por Telegram si te has ido.
+**claude-telegram-hook soluciona esto.** Un simple comando para activar Telegram antes de irte. Claude envia los permisos a tu movil. Tocas Permitir desde donde estes. Claude no para nunca.
 
-### Antes (sin este hook)
+```
+Estas en el PC:
+  Claude trabaja de forma autonoma (comandos seguros van solos)
+  Comandos peligrosos preguntan en terminal -> escribes y
+
+Te tienes que levantar:
+  Escribe /telegram -> Telegram activado
+  Claude sigue trabajando
+  Comandos peligrosos van al movil -> tocas Permitir
+  Apruebas desde el sofa, la cafeteria, la reunion
+
+Vuelves al PC:
+  Escribe /telegram -> Telegram desactivado
+  De vuelta a prompts en terminal
+```
+
+## Como Funciona
+
+**Los comandos seguros se ejecutan solos.** Leer archivos, `git status`, `ls`, `grep`, `npm test` -- todo auto-aprobado en silencio. Claude fluye sin interrupciones. Esta es la clave para un uso fluido: **debes habilitar la ejecucion autonoma de comandos no peligrosos** en la configuracion de Claude Code (el instalador lo hace por ti).
+
+**Solo los comandos peligrosos piden permiso:** `rm`, `git push`, `sudo`, borrar archivos, cambiar credenciales. Estos son los que van a la terminal normalmente, o a Telegram cuando lo tienes activado.
+
+### Sin este hook
 
 ```
 Claude lee 20 archivos...         -> "Allow Read?" [y/n]  (escribes y)
@@ -28,10 +50,10 @@ Claude ejecuta `git status`...    -> "Allow Bash?" [y/n]  (escribes y)
 Claude ejecuta `ls -la`...        -> "Allow Bash?" [y/n]  (escribes y)
 Claude ejecuta `npm test`...      -> "Allow Bash?" [y/n]  (escribes y)
 
-Todas. Las. Operaciones. Preguntan.
+Todas. Las. Operaciones. Preguntan. Claude se para constantemente.
 ```
 
-### Despues (con filtro inteligente)
+### Con este hook (en el PC)
 
 ```
 Claude lee 20 archivos...         -> auto-aprobado (silencioso)
@@ -40,10 +62,10 @@ Claude ejecuta `ls -la`...        -> auto-aprobado (silencioso)
 Claude ejecuta `npm test`...      -> auto-aprobado (silencioso)
 
 Claude quiere ejecutar: git push  -> Terminal: "Allow? [y/n]"
-                                     (escribes y -- solo para ops peligrosas)
+                                     (solo ops peligrosas preguntan)
 ```
 
-### Despues (con Telegram activado)
+### Con Telegram activado (lejos del PC)
 
 ```
 Claude lee 20 archivos...         -> auto-aprobado (silencioso)
@@ -53,14 +75,12 @@ Claude quiere ejecutar: git push
   El movil vibra:
   "Claude quiere ejecutar: git push"
   [ Permitir ]  [ Denegar ]
-  *Toque en Permitir desde el sofa*
+  Toca Permitir desde donde estes. Claude continua al instante.
 ```
 
-**Dos modos. Tu eliges:**
-- **Telegram OFF** (por defecto): Ops seguras auto-aprobadas, peligrosas preguntan en terminal
-- **Telegram ON**: Ops seguras auto-aprobadas, peligrosas van a Telegram con botones
-
-Cambia cuando quieras con `/telegram` dentro de Claude Code, o `telegram-on.sh` / `telegram-off.sh`.
+**Un simple comando para activar/desactivar:**
+- `/telegram` dentro de Claude Code -- menu interactivo para ON/OFF
+- O usa `telegram-on.sh` / `telegram-off.sh` desde cualquier terminal
 
 ---
 
@@ -157,11 +177,11 @@ Agrega el hook en tu `~/.claude/settings.json`:
 }
 ```
 
-> **Sobre `PreToolUse`:** El hook se ejecuta antes de cada herramienta. El filtro inteligente auto-aprueba las operaciones seguras. Para las peligrosas, no produce salida, lo que hace que Claude Code muestre su prompt normal de terminal (`y/n`).
+> **Sobre `PreToolUse`:** El hook se ejecuta antes de cada herramienta. El filtro inteligente auto-aprueba los comandos seguros (lecturas, `ls`, `git status`, etc.) para que Claude trabaje de forma autonoma sin interrupciones. Para los comandos peligrosos, el hook no produce salida, lo que activa el prompt normal de terminal.
 >
-> **Sobre `defaultMode: "default"`:** Necesario para que aparezca el prompt de terminal en operaciones peligrosas.
+> **Sobre `defaultMode: "default"`:** Esto es esencial. Significa que los comandos peligrosos siguen requiriendo tu aprobacion en terminal (o Telegram cuando esta activado). La combinacion del hook + este ajuste te da lo mejor de ambos mundos: **ejecucion autonoma de comandos seguros + aprobacion solo para los peligrosos**.
 
-**Listo.** Las operaciones seguras ahora se auto-aprueban. Las peligrosas preguntan en la terminal.
+**Listo.** Claude ahora trabaja de forma fluida -- los comandos seguros van solos, los peligrosos piden tu OK.
 
 ---
 

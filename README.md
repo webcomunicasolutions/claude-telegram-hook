@@ -6,31 +6,52 @@
 
 # claude-telegram-hook
 
-**Smart permissions for Claude Code. Approve from your terminal or your phone.**
+**Let Claude Code keep working while you're away. Approve dangerous commands from your phone.**
 
 > [English] | [Espanol](README_ES.md)
 
 ---
 
-## Why?
+## The Problem
 
-Claude Code is incredible -- until it asks for permission. Every shell command, every file write pauses and waits for you to type `y`. But not every operation deserves a prompt. `ls -la` is not `rm -rf /`.
+You're working with Claude Code. It's building a feature, running tests, writing files -- flowing. Then you need to step away. Coffee, a meeting, lunch, whatever. Claude keeps working... until it hits a command that needs your approval. And it stops. And waits. For minutes. For hours. Until you come back.
 
-**claude-telegram-hook fixes that.** Safe operations run autonomously. Dangerous ones ask you -- in the terminal when you're at the PC, or on Telegram when you're away.
+**claude-telegram-hook solves this.** One command to activate Telegram mode before you leave. Claude sends permission requests to your phone. You tap Allow from anywhere. Claude never stops.
 
-### Before (without this hook)
+```
+You're at the PC:
+  Claude works autonomously (safe commands run silently)
+  Dangerous commands ask in terminal -> you type y
+
+You need to step away:
+  Type /telegram -> Telegram mode ON
+  Claude keeps working
+  Dangerous commands go to your phone -> tap Allow
+  You approve from the couch, the cafe, the meeting
+
+You're back:
+  Type /telegram -> Telegram mode OFF
+  Back to terminal prompts
+```
+
+## How It Works
+
+**Safe commands run autonomously.** Reading files, `git status`, `ls`, `grep`, `npm test` -- all auto-approved silently. Claude flows without interruption. This is the key for a fluid experience: **you should enable autonomous execution of non-dangerous commands** in Claude Code's settings (the installer does this for you).
+
+**Only dangerous commands ask for permission:** `rm`, `git push`, `sudo`, file deletions, credential changes. These are the ones that go to your terminal normally, or to Telegram when you've activated it.
+
+### Without this hook
 
 ```
 Claude reads 20 files...         -> "Allow Read?" [y/n]  (you type y)
 Claude runs `git status`...      -> "Allow Bash?" [y/n]  (you type y)
 Claude runs `ls -la`...          -> "Allow Bash?" [y/n]  (you type y)
 Claude runs `npm test`...        -> "Allow Bash?" [y/n]  (you type y)
-Claude runs `git push`...        -> "Allow Bash?" [y/n]  (you type y)
 
-Every. Single. Operation. Asks.
+Every. Single. Operation. Asks. Claude stops constantly.
 ```
 
-### After (with smart filtering)
+### With this hook (at the PC)
 
 ```
 Claude reads 20 files...         -> auto-approved (silent)
@@ -39,27 +60,25 @@ Claude runs `ls -la`...          -> auto-approved (silent)
 Claude runs `npm test`...        -> auto-approved (silent)
 
 Claude wants to run: git push    -> Terminal: "Allow? [y/n]"
-                                    (you type y -- only for dangerous ops)
+                                    (only dangerous ops ask)
 ```
 
-### After (with Telegram enabled)
+### With Telegram ON (away from PC)
 
 ```
 Claude reads 20 files...         -> auto-approved (silent)
 Claude runs `git status`...      -> auto-approved (silent)
 
 Claude wants to run: git push
-  Phone buzzes:
+  Your phone buzzes:
   "Claude wants to run: git push"
   [ Allow ]  [ Deny ]
-  *Tap Allow from the couch*
+  Tap Allow from anywhere. Claude continues instantly.
 ```
 
-**Two modes. You choose:**
-- **Telegram OFF** (default): Safe ops auto-approved, dangerous ops ask in terminal
-- **Telegram ON**: Safe ops auto-approved, dangerous ops go to Telegram with buttons
-
-Toggle anytime with `/telegram` inside Claude Code, or `telegram-on.sh` / `telegram-off.sh`.
+**One simple command to toggle:**
+- `/telegram` inside Claude Code -- interactive menu to turn ON/OFF
+- Or use `telegram-on.sh` / `telegram-off.sh` from any terminal
 
 ---
 
@@ -183,11 +202,11 @@ Open `~/.claude/settings.json` and add the hook:
 }
 ```
 
-> **About `PreToolUse`:** This hook fires before every tool use, so the smart filter can auto-approve safe operations silently. Dangerous operations produce no output, which causes Claude Code to fall through to its normal permission prompt (terminal `y/n`).
+> **About `PreToolUse`:** This hook fires before every tool use. The smart filter auto-approves safe commands (reads, `ls`, `git status`, etc.) so Claude works autonomously without interruption. For dangerous commands, the hook produces no output, which triggers Claude Code's normal terminal prompt.
 >
-> **About `defaultMode: "default"`:** This is required for the terminal permission prompt to appear for dangerous operations. Without it, Claude Code might auto-approve everything.
+> **About `defaultMode: "default"`:** This is essential. It means dangerous commands still require your approval in the terminal (or Telegram when enabled). The combination of the hook + this setting gives you the best of both worlds: **autonomous execution of safe commands + approval only for dangerous ones**.
 
-**That's it.** Safe operations are now auto-approved. Dangerous ones ask in the terminal.
+**That's it.** Claude now works fluidly -- safe commands run silently, dangerous ones ask for your OK.
 
 ---
 
