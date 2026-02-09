@@ -4,8 +4,8 @@
 # =============================================================================
 #
 # Installs the Telegram permission hook for Claude Code.
-# When Claude Code needs permission, it sends a message to Telegram
-# instead of waiting in the terminal.
+# Smart filtering auto-approves safe operations. Dangerous ones go to
+# terminal prompt (default) or Telegram (when enabled).
 #
 # Usage:
 #   bash install.sh
@@ -45,7 +45,7 @@ print_banner() {
     echo -e "${CYAN}${BOLD}=====================================================${NC}"
     echo -e "${CYAN}${BOLD}   claude-telegram-hook installer${NC}"
     echo -e "${CYAN}${BOLD}=====================================================${NC}"
-    echo -e "${DIM}   Approve/reject Claude Code permissions via Telegram${NC}"
+    echo -e "${DIM}   Smart permissions for Claude Code${NC}"
     echo ""
 }
 
@@ -177,11 +177,11 @@ ask_sensitivity_config() {
     step "Smart filtering configuration"
     echo ""
     echo -e "${DIM}  Smart filtering auto-approves safe operations (ls, cat, git status...)${NC}"
-    echo -e "${DIM}  and only sends dangerous ones (rm, sudo, git push...) to Telegram.${NC}"
+    echo -e "${DIM}  and only asks for dangerous ones (rm, sudo, git push...).${NC}"
     echo ""
-    echo -e "  ${BOLD}1)${NC} ${GREEN}smart${NC} (recommended) -- Auto-approve safe, Telegram for dangerous"
-    echo -e "  ${BOLD}2)${NC} ${YELLOW}critical${NC} -- Only the most destructive ops go to Telegram"
-    echo -e "  ${BOLD}3)${NC} ${RED}all${NC} -- Everything goes to Telegram (v0.3 behavior)"
+    echo -e "  ${BOLD}1)${NC} ${GREEN}smart${NC} (recommended) -- Auto-approve safe, ask for dangerous"
+    echo -e "  ${BOLD}2)${NC} ${YELLOW}critical${NC} -- Only the most destructive ops need approval"
+    echo -e "  ${BOLD}3)${NC} ${RED}all${NC} -- Everything needs approval (no auto-approve)"
     echo ""
 
     while true; do
@@ -195,31 +195,6 @@ ask_sensitivity_config() {
     done
 
     success "Sensitivity mode: $SENSITIVITY_MODE"
-}
-
-ask_local_dialog_config() {
-    step "Dangerous operations behavior"
-    echo ""
-    echo -e "${DIM}  When a dangerous operation is detected, you can choose how to handle it:${NC}"
-    echo ""
-    echo -e "  ${BOLD}1) Terminal (default)${NC} - Claude Code asks you in the conversation"
-    echo -e "  ${BOLD}2) PC popup + Telegram${NC} - Native popup on PC, then Telegram if no response"
-    echo -e "     WSL2: Windows popup | Linux: zenity | macOS: osascript"
-    echo ""
-
-    read -rp "$(echo -e "${BOLD}  Choice [1/2] (default: 1): ${NC}")" dialog_choice
-    if [[ "$dialog_choice" == "2" ]]; then
-        read -rp "$(echo -e "${BOLD}  Popup timeout in seconds (default: 30): ${NC}")" local_timeout
-        LOCAL_DELAY_VALUE="${local_timeout:-30}"
-        if ! [[ "$LOCAL_DELAY_VALUE" =~ ^[0-9]+$ ]]; then
-            warn "Invalid number, using default (30)"
-            LOCAL_DELAY_VALUE=30
-        fi
-        success "PC popup enabled (${LOCAL_DELAY_VALUE}s), then Telegram on timeout"
-    else
-        LOCAL_DELAY_VALUE=0
-        success "Dangerous operations will be handled in the terminal"
-    fi
 }
 
 # --- Installation Steps ---
@@ -287,14 +262,10 @@ export TELEGRAM_BOT_TOKEN="$BOT_TOKEN"
 export TELEGRAM_CHAT_ID="$CHAT_ID"
 
 # Smart filtering: all | smart | critical (default: smart)
-# - all: every permission goes to Telegram (v0.3 behavior)
-# - smart: auto-approves safe commands, Telegram for dangerous ones
-# - critical: only the most destructive operations go to Telegram
+# - all: every tool needs approval (no auto-approve)
+# - smart: auto-approves safe commands, asks for dangerous ones
+# - critical: only the most destructive operations need approval
 export TELEGRAM_SENSITIVITY="${SENSITIVITY_MODE:-smart}"
-
-# Local dialog timeout in seconds (0 = terminal prompt, N>0 = popup then Telegram)
-# Shows a native popup on your PC before escalating to Telegram
-export TELEGRAM_LOCAL_DELAY="${LOCAL_DELAY_VALUE:-0}"
 
 # Timeout in seconds for Telegram permission requests (default: 300)
 # export TELEGRAM_PERMISSION_TIMEOUT="300"
@@ -324,7 +295,7 @@ if [ -f "$ENV_FILE" ]; then
     # shellcheck disable=SC1090
     source "$ENV_FILE"
 else
-    echo '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Telegram hook .env file not found. Run install.sh again."}}}'
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Telegram hook .env file not found. Run install.sh again."}}'
     exit 0
 fi
 
@@ -359,8 +330,8 @@ configure_settings() {
     cp "$SETTINGS_FILE" "${SETTINGS_FILE}.backup.$(date +%Y%m%d%H%M%S)"
     info "Backup created of settings.json"
 
-    # --- Add PermissionRequest hook ---
-    info "Adding PermissionRequest hook..."
+    # --- Add PreToolUse hook ---
+    info "Adding PreToolUse hook..."
 
     # Build the new hook entry
     local new_hook_entry
@@ -374,59 +345,77 @@ configure_settings() {
         ]
     }')
 
-    # Check if hooks.PermissionRequest already exists
-    local has_permission_hook
-    has_permission_hook=$(jq 'has("hooks") and (.hooks | has("PermissionRequest"))' "$SETTINGS_FILE" 2>/dev/null || echo "false")
+    # Check if hooks.PreToolUse already exists
+    local has_pretool_hook
+    has_pretool_hook=$(jq 'has("hooks") and (.hooks | has("PreToolUse"))' "$SETTINGS_FILE" 2>/dev/null || echo "false")
 
-    if [ "$has_permission_hook" = "true" ]; then
+    if [ "$has_pretool_hook" = "true" ]; then
         # Check if our hook command is already present
-        local already_installed
-        already_installed=$(jq --arg cmd "$hook_command" '
-            .hooks.PermissionRequest[]
-            | .hooks[]
-            | select(.command == $cmd)
-            | length > 0
-        ' "$SETTINGS_FILE" 2>/dev/null || echo "false")
+        local count
+        count=$(jq --arg cmd "$hook_command" '
+            [.hooks.PreToolUse[].hooks[] | select(.command | test("hook_permission_telegram"))] | length
+        ' "$SETTINGS_FILE" 2>/dev/null || echo "0")
 
-        if [ "$already_installed" = "true" ] || [ "$already_installed" != "false" ] && [ "$already_installed" != "" ]; then
-            # More precise check
-            local count
-            count=$(jq --arg cmd "$hook_command" '
-                [.hooks.PermissionRequest[].hooks[] | select(.command == $cmd)] | length
-            ' "$SETTINGS_FILE" 2>/dev/null || echo "0")
-
-            if [ "$count" -gt 0 ]; then
-                warn "PermissionRequest hook is already configured in settings.json"
-                info "Updating the existing hook command..."
-                # Update the command in the existing entry
-                jq --arg cmd "$hook_command" '
-                    .hooks.PermissionRequest |= [
-                        .[] | .hooks |= [
-                            .[] | if .command | test("hook_permission_telegram") then .command = $cmd else . end
-                        ]
+        if [ "$count" -gt 0 ]; then
+            warn "PreToolUse hook is already configured in settings.json"
+            info "Updating the existing hook command..."
+            jq --arg cmd "$hook_command" '
+                .hooks.PreToolUse |= [
+                    .[] | .hooks |= [
+                        .[] | if .command | test("hook_permission_telegram") then .command = $cmd else . end
                     ]
-                ' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
-                success "Updated existing PermissionRequest hook."
-            else
-                info "Appending hook to existing PermissionRequest configuration..."
-                jq --argjson entry "$new_hook_entry" '
-                    .hooks.PermissionRequest += [$entry]
-                ' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
-                success "Added PermissionRequest hook to existing configuration."
-            fi
-        else
-            info "Appending hook to existing PermissionRequest configuration..."
-            jq --argjson entry "$new_hook_entry" '
-                .hooks.PermissionRequest += [$entry]
+                ]
             ' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
-            success "Added PermissionRequest hook to existing configuration."
+            success "Updated existing PreToolUse hook."
+        else
+            info "Appending hook to existing PreToolUse configuration..."
+            jq --argjson entry "$new_hook_entry" '
+                .hooks.PreToolUse += [$entry]
+            ' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+            success "Added PreToolUse hook to existing configuration."
         fi
     else
-        # Add hooks.PermissionRequest from scratch (preserve existing hooks)
+        # Add hooks.PreToolUse from scratch (preserve existing hooks)
         jq --argjson entry "$new_hook_entry" '
-            .hooks = (.hooks // {}) | .hooks.PermissionRequest = [$entry]
+            .hooks = (.hooks // {}) | .hooks.PreToolUse = [$entry]
         ' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
-        success "Added PermissionRequest hook configuration."
+        success "Added PreToolUse hook configuration."
+    fi
+
+    # --- Remove old PermissionRequest hook if present ---
+    local has_old_hook
+    has_old_hook=$(jq 'has("hooks") and (.hooks | has("PermissionRequest"))' "$SETTINGS_FILE" 2>/dev/null || echo "false")
+    if [ "$has_old_hook" = "true" ]; then
+        local old_count
+        old_count=$(jq '
+            [.hooks.PermissionRequest[]?.hooks[]? | select(.command | test("hook_permission_telegram"))] | length
+        ' "$SETTINGS_FILE" 2>/dev/null || echo "0")
+
+        if [ "$old_count" -gt 0 ]; then
+            info "Removing old PermissionRequest hook (migrated to PreToolUse)..."
+            jq '
+                .hooks.PermissionRequest |= [
+                    .[] | select(
+                        (.hooks // []) | all(.command | test("hook_permission_telegram") | not)
+                    )
+                ]
+                | if (.hooks.PermissionRequest | length) == 0 then del(.hooks.PermissionRequest) else . end
+            ' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+            success "Removed old PermissionRequest hook."
+        fi
+    fi
+
+    # --- Ensure defaultMode is "default" ---
+    info "Checking permissions configuration..."
+    local current_mode
+    current_mode=$(jq -r '.permissions.defaultMode // "not_set"' "$SETTINGS_FILE" 2>/dev/null)
+
+    if [ "$current_mode" != "default" ]; then
+        jq '.permissions = (.permissions // {}) | .permissions.defaultMode = "default"' \
+            "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+        success "Set defaultMode to \"default\" (required for terminal prompts)."
+    else
+        success "defaultMode is already \"default\"."
     fi
 
     # --- Add api.telegram.org to sandbox network allowedDomains ---
@@ -497,9 +486,13 @@ test_telegram_connection() {
     info "Sending test message to chat $CHAT_ID..."
     local test_message="<b>claude-telegram-hook</b> installed successfully!
 
-This chat will receive permission requests from Claude Code.
+This chat will receive permission requests from Claude Code when Telegram mode is enabled.
 
-You can approve or reject actions using the inline buttons or by typing <i>si/no</i>."
+<b>How to use:</b>
+- Safe operations (ls, cat, git status) are auto-approved silently
+- Dangerous operations ask in your terminal by default
+- Use <code>/telegram</code> in Claude Code to enable Telegram approvals
+- Or run: <code>echo 120 > /tmp/claude_telegram_active</code>"
 
     local send_response
     send_response=$(curl -s -m 10 -X POST "${api_url}/sendMessage" \
@@ -541,22 +534,21 @@ print_summary() {
     echo -e "    Environment:    ${CYAN}$ENV_FILE${NC}"
     echo -e "    Settings:       ${CYAN}$SETTINGS_FILE${NC}"
     echo ""
-    echo -e "  ${BOLD}Smart filtering:${NC}"
+    echo -e "  ${BOLD}Configuration:${NC}"
     echo -e "    Sensitivity: ${CYAN}${SENSITIVITY_MODE:-smart}${NC}"
-    if [ "${LOCAL_DELAY_VALUE:-0}" -gt 0 ] 2>/dev/null; then
-        echo -e "    Dangerous ops: ${CYAN}PC popup (${LOCAL_DELAY_VALUE}s) -> Telegram${NC}"
-    else
-        echo -e "    Dangerous ops: ${CYAN}Terminal prompt${NC}"
-    fi
+    echo -e "    Safe operations: ${GREEN}auto-approved silently${NC}"
+    echo -e "    Dangerous operations: ${YELLOW}terminal prompt (default)${NC}"
+    echo -e "    Telegram: ${DIM}OFF by default${NC}"
+    echo ""
+    echo -e "  ${BOLD}To enable Telegram approvals:${NC}"
+    echo -e "    ${CYAN}/telegram${NC}  (inside Claude Code -- interactive menu)"
+    echo -e "    ${CYAN}echo 120 > /tmp/claude_telegram_active${NC}  (from terminal)"
     echo ""
     echo -e "  ${BOLD}Next steps:${NC}"
     echo -e "    ${YELLOW}1.${NC} Restart Claude Code for the hook to take effect."
-    echo -e "    ${YELLOW}2.${NC} Safe operations (ls, cat, git status) are auto-approved."
-    echo -e "    ${YELLOW}3.${NC} Dangerous operations are handled per your configuration above."
-    echo ""
-    echo -e "  ${BOLD}Configuration:${NC}"
-    echo -e "    Edit ${CYAN}$ENV_FILE${NC} to change bot token, chat ID, sensitivity, or timeout."
-    echo -e "    Edit ${CYAN}$SETTINGS_FILE${NC} to modify hook behavior."
+    echo -e "    ${YELLOW}2.${NC} Safe operations will be auto-approved (no prompt)."
+    echo -e "    ${YELLOW}3.${NC} Dangerous operations will ask in the terminal."
+    echo -e "    ${YELLOW}4.${NC} Use ${CYAN}/telegram${NC} when you want to approve from your phone."
     echo ""
     echo -e "  ${BOLD}Troubleshooting:${NC}"
     echo -e "    Logs: ${CYAN}/tmp/telegram_claude_hook.log${NC}"
@@ -597,27 +589,34 @@ uninstall() {
         removed=1
     fi
 
-    # Remove hook from settings.json
+    # Remove hook from settings.json (both PreToolUse and PermissionRequest)
     if [ -f "$SETTINGS_FILE" ]; then
-        local has_hook
-        has_hook=$(jq 'has("hooks") and (.hooks | has("PermissionRequest"))' "$SETTINGS_FILE" 2>/dev/null || echo "false")
+        cp "$SETTINGS_FILE" "${SETTINGS_FILE}.backup.$(date +%Y%m%d%H%M%S)"
 
-        if [ "$has_hook" = "true" ]; then
-            cp "$SETTINGS_FILE" "${SETTINGS_FILE}.backup.$(date +%Y%m%d%H%M%S)"
+        for hook_event in "PreToolUse" "PermissionRequest"; do
+            local has_hook
+            has_hook=$(jq --arg event "$hook_event" 'has("hooks") and (.hooks | has($event))' "$SETTINGS_FILE" 2>/dev/null || echo "false")
 
-            # Remove entries that reference our hook script
-            jq '
-                .hooks.PermissionRequest |= [
-                    .[] | select(
-                        (.hooks // []) | all(.command | test("hook_permission_telegram") | not)
-                    )
-                ]
-                | if (.hooks.PermissionRequest | length) == 0 then del(.hooks.PermissionRequest) else . end
-                | if (.hooks | length) == 0 then del(.hooks) else . end
-            ' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
-            success "Removed PermissionRequest hook from settings.json"
-            removed=1
-        fi
+            if [ "$has_hook" = "true" ]; then
+                jq --arg event "$hook_event" '
+                    .hooks[$event] |= [
+                        .[] | select(
+                            (.hooks // []) | all(.command | test("hook_permission_telegram") | not)
+                        )
+                    ]
+                    | if (.hooks[$event] | length) == 0 then del(.hooks[$event]) else . end
+                    | if (.hooks | length) == 0 then del(.hooks) else . end
+                ' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+                success "Removed $hook_event hook from settings.json"
+                removed=1
+            fi
+        done
+    fi
+
+    # Remove flag file
+    if [ -f "/tmp/claude_telegram_active" ]; then
+        rm -f /tmp/claude_telegram_active
+        success "Removed Telegram flag file"
     fi
 
     # Remove backups
@@ -634,8 +633,6 @@ uninstall() {
         echo ""
         success "claude-telegram-hook has been uninstalled."
         warn "Restart Claude Code for changes to take effect."
-        info "Note: api.telegram.org was left in sandbox allowedDomains (harmless)."
-        info "Note: settings.json backups were preserved in $CLAUDE_DIR/"
     fi
 }
 
@@ -675,28 +672,25 @@ main() {
     # Step 4: Smart filtering configuration
     ask_sensitivity_config
 
-    # Step 5: Local dialog configuration
-    ask_local_dialog_config
-
-    # Step 6: Create directories
+    # Step 5: Create directories
     create_directories
 
-    # Step 7: Copy hook script
+    # Step 6: Copy hook script
     copy_hook_script
 
-    # Step 8: Create .env file
+    # Step 7: Create .env file
     create_env_file
 
-    # Step 9: Create wrapper script
+    # Step 8: Create wrapper script
     create_wrapper_script
 
-    # Step 10: Configure settings.json
+    # Step 9: Configure settings.json
     configure_settings
 
-    # Step 11: Test Telegram connection
+    # Step 10: Test Telegram connection
     test_telegram_connection || true
 
-    # Step 12: Print summary
+    # Step 11: Print summary
     print_summary
 }
 

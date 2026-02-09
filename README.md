@@ -6,7 +6,7 @@
 
 # claude-telegram-hook
 
-**Control Claude Code from your phone. Walk away from the terminal.**
+**Smart permissions for Claude Code. Approve from your terminal or your phone.**
 
 > [English] | [Espanol](README_ES.md)
 
@@ -14,85 +14,66 @@
 
 ## Why?
 
-Claude Code is incredible -- until it asks for permission. Every shell command, every file write, every tool call pauses and waits for you to type `y` in the terminal. You're stuck staring at a blinking cursor while your coffee gets cold.
+Claude Code is incredible -- until it asks for permission. Every shell command, every file write pauses and waits for you to type `y`. But not every operation deserves a prompt. `ls -la` is not `rm -rf /`.
 
-**claude-telegram-hook fixes that.** Permission requests go to your phone. You tap a button. Claude keeps working. You keep living.
+**claude-telegram-hook fixes that.** Safe operations run autonomously. Dangerous ones ask you -- in the terminal when you're at the PC, or on Telegram when you're away.
 
-### Before
-
-```
-You: Refactor the auth module and run the tests.
-
-Claude: I need to run `npm test`. Allow? [y/n]
-You: *watching terminal* ... y
-
-Claude: I need to write src/auth.ts. Allow? [y/n]
-You: *still watching* ... y
-
-Claude: I need to run `git diff`. Allow? [y/n]
-You: *20 minutes later, still here* ... y
-```
-
-### After
+### Before (without this hook)
 
 ```
-You: Refactor the auth module and run the tests.
+Claude reads 20 files...         -> "Allow Read?" [y/n]  (you type y)
+Claude runs `git status`...      -> "Allow Bash?" [y/n]  (you type y)
+Claude runs `ls -la`...          -> "Allow Bash?" [y/n]  (you type y)
+Claude runs `npm test`...        -> "Allow Bash?" [y/n]  (you type y)
+Claude runs `git push`...        -> "Allow Bash?" [y/n]  (you type y)
 
-*You walk away. Make coffee. Pet the dog.*
-
-Phone buzzes:
-  "Claude wants to run: npm test"
-  [ Allow ]  [ Deny ]
-*Tap Allow from the couch.*
-
-Phone buzzes:
-  "Claude wants to write: src/auth.ts"
-  [ Allow ]  [ Deny ]
-*Tap Allow while sipping coffee.*
+Every. Single. Operation. Asks.
 ```
 
-Claude Code keeps working. You keep living.
-
-### With Smart Filtering (v0.4.0)
+### After (with smart filtering)
 
 ```
-You: Refactor the auth module and run the tests.
+Claude reads 20 files...         -> auto-approved (silent)
+Claude runs `git status`...      -> auto-approved (silent)
+Claude runs `ls -la`...          -> auto-approved (silent)
+Claude runs `npm test`...        -> auto-approved (silent)
 
-Claude reads 20 files...     (auto-approved, no notification)
-Claude runs `git status`...  (auto-approved, no notification)
-Claude runs `npm test`...    (auto-approved, no notification)
+Claude wants to run: git push    -> Terminal: "Allow? [y/n]"
+                                    (you type y -- only for dangerous ops)
+```
+
+### After (with Telegram enabled)
+
+```
+Claude reads 20 files...         -> auto-approved (silent)
+Claude runs `git status`...      -> auto-approved (silent)
 
 Claude wants to run: git push
-  [PC popup: Yes/No - 30 seconds]
-  *You see the popup on your Windows taskbar, click Yes*
-  Done. No phone needed.
-
-Claude wants to run: rm -rf node_modules && npm install
-  [PC popup: Yes/No - 30 seconds]
-  *You're in the kitchen, popup times out...*
-  [Telegram: Allow/Deny - 5 minutes]
-  *Phone buzzes, tap Allow*
+  Phone buzzes:
+  "Claude wants to run: git push"
+  [ Allow ]  [ Deny ]
+  *Tap Allow from the couch*
 ```
 
-Only dangerous operations bother you. And you answer from wherever you are.
+**Two modes. You choose:**
+- **Telegram OFF** (default): Safe ops auto-approved, dangerous ops ask in terminal
+- **Telegram ON**: Safe ops auto-approved, dangerous ops go to Telegram with buttons
+
+Toggle anytime with `/telegram` inside Claude Code, or `telegram-on.sh` / `telegram-off.sh`.
 
 ---
 
 ## What You Need
 
-That's the beauty of this project: almost nothing.
-
 | # | Requirement | Details |
 |---|---|---|
 | 1 | **A Telegram account** | The app you already have on your phone |
-| 2 | **A Telegram bot token** | Created in 30 seconds via @BotFather -- free, instant, no approval |
+| 2 | **A Telegram bot token** | Created in 30 seconds via @BotFather -- free, instant |
 | 3 | **Your Telegram user ID** | A number you grab once (we'll show you how) |
 | 4 | **curl** | Already installed on macOS and virtually every Linux |
-| 5 | **jq** | One command to install: `apt install jq` or `brew install jq` |
+| 5 | **jq** | One command: `apt install jq` or `brew install jq` |
 
-**That's the whole list.** No servers to run. No databases. No Docker. No cloud accounts. No paid API keys. Telegram's Bot API is free with zero meaningful rate limits for this use case.
-
-The entire hook is **a single Bash script** that talks to Telegram using `curl`. That's it.
+**That's the whole list.** No servers. No databases. No Docker. No paid APIs. Just a Bash script that talks to Telegram via `curl`.
 
 ---
 
@@ -100,46 +81,36 @@ The entire hook is **a single Bash script** that talks to Telegram using `curl`.
 
 ### Phase 1: Create Your Telegram Bot (30 seconds)
 
-Open Telegram on your phone or desktop and search for **[@BotFather](https://t.me/BotFather)** -- Telegram's official tool for creating bots.
+Open Telegram and search for **[@BotFather](https://t.me/BotFather)**.
 
-**Step 1** -- Start a chat with BotFather and send:
+**Step 1** -- Start a chat and send:
 
 ```
 /newbot
 ```
 
-**Step 2** -- BotFather replies: *"Alright, a new bot. How are we going to call it? Please choose a name for your bot."*
-
-Type a friendly name:
+**Step 2** -- Pick a name:
 
 ```
 Claude Code Approver
 ```
 
-**Step 3** -- BotFather replies: *"Good. Now let's choose a username for your bot. It must end in `bot`."*
-
-Pick a unique username:
+**Step 3** -- Pick a username (must end in `bot`):
 
 ```
 my_claude_approver_bot
 ```
 
-**Step 4** -- BotFather responds with your token:
+**Step 4** -- BotFather gives you a token:
 
 ```
-Done! Congratulations on your new bot. You can now add a description,
-about section and profile picture for your bot.
-
 Use this token to access the HTTP API:
 7012345678:AAH1bmFnZ2luZy1hLWJvdC10b2tlbi1oZXJl
-
-Keep your token secure and store it safely, it can be used by anyone
-to control your bot.
 ```
 
-> Copy that long string. That is your **`TELEGRAM_BOT_TOKEN`**.
+> That's your **`TELEGRAM_BOT_TOKEN`**.
 
-**Step 5** -- Now get your user ID. Search for **[@userinfobot](https://t.me/userinfobot)** on Telegram and send it any message. It replies instantly:
+**Step 5** -- Get your user ID. Message **[@userinfobot](https://t.me/userinfobot)** on Telegram:
 
 ```
 Your user ID: 123456789
@@ -147,9 +118,7 @@ Your user ID: 123456789
 
 > That number is your **`TELEGRAM_CHAT_ID`**.
 
-**Step 6** -- One last thing: open a chat with **your new bot** and send `/start`. This is required -- bots cannot message you until you initiate contact.
-
-Done. You now have the only two credentials you need.
+**Step 6** -- Open a chat with **your new bot** and send `/start`. Required -- bots can't message you first.
 
 ---
 
@@ -166,14 +135,14 @@ cp hook_permission_telegram.sh ~/.claude/hooks/
 chmod +x ~/.claude/hooks/hook_permission_telegram.sh
 ```
 
-Now set your credentials. Add these two lines to your `~/.bashrc`, `~/.zshrc`, or `~/.profile`:
+Set your credentials in `~/.bashrc`, `~/.zshrc`, or `~/.profile`:
 
 ```bash
 export TELEGRAM_BOT_TOKEN="7012345678:AAH1bmFnZ2luZy1hLWJvdC10b2tlbi1oZXJl"
 export TELEGRAM_CHAT_ID="123456789"
 ```
 
-Reload your shell:
+Reload:
 
 ```bash
 source ~/.bashrc  # or ~/.zshrc
@@ -183,12 +152,12 @@ source ~/.bashrc  # or ~/.zshrc
 
 ### Phase 3: Configure Claude Code (30 seconds)
 
-Open (or create) `~/.claude/settings.json` and add the hook:
+Open `~/.claude/settings.json` and add the hook:
 
 ```json
 {
   "hooks": {
-    "PermissionRequest": [
+    "PreToolUse": [
       {
         "matcher": "",
         "hooks": [
@@ -204,13 +173,21 @@ Open (or create) `~/.claude/settings.json` and add the hook:
 }
 ```
 
-> **Tip:** The `"matcher": ""` means the hook triggers for all permission requests. You can set it to `"Bash"` to only get Telegram prompts for shell commands, for example.
->
-> **About the timeout:** The `600` seconds gives enough room for the retry mechanism (each round is ~120s wait + 60s retry window, up to 2 retries by default). The actual per-round timeout is controlled by `TELEGRAM_PERMISSION_TIMEOUT` (120s default).
->
-> **About PermissionRequest:** This hook uses the `PermissionRequest` event, which fires only when Claude Code would show you a permission dialog. This means it won't bother you for tools that are already auto-approved in your permissions.
+**Important settings** for proper operation:
 
-**That's it. You're done.** Start Claude Code and ask it to do something that needs permission. Your phone will buzz.
+```json
+{
+  "permissions": {
+    "defaultMode": "default"
+  }
+}
+```
+
+> **About `PreToolUse`:** This hook fires before every tool use, so the smart filter can auto-approve safe operations silently. Dangerous operations produce no output, which causes Claude Code to fall through to its normal permission prompt (terminal `y/n`).
+>
+> **About `defaultMode: "default"`:** This is required for the terminal permission prompt to appear for dangerous operations. Without it, Claude Code might auto-approve everything.
+
+**That's it.** Safe operations are now auto-approved. Dangerous ones ask in the terminal.
 
 ---
 
@@ -218,38 +195,37 @@ Open (or create) `~/.claude/settings.json` and add the hook:
 
 ```mermaid
 flowchart TD
-    A[Claude Code: PermissionRequest] --> B{Layer 1: Smart Filter}
-    B -->|Safe: ls, cat, git status...| C[Auto-approve]
-    B -->|Dangerous: rm, sudo, git push...| D{Layer 2: Local Dialog}
-    D -->|Yes| E[Allow]
-    D -->|No| F[Deny]
-    D -->|Timeout / No GUI| G{Layer 3: Telegram}
-    G -->|Allow button| E
-    G -->|Deny button| F
-    G -->|Timeout| H{Retry?}
-    H -->|User taps Retry| G
-    H -->|Max retries reached| F
+    A[Claude Code: PreToolUse] --> B{Smart Filter}
+    B -->|Safe: ls, cat, git status...| C[Auto-approve silently]
+    B -->|Dangerous: rm, sudo, git push...| D{Telegram enabled?}
+    D -->|No| E[Terminal prompt y/n]
+    D -->|Yes + tmux| F[Terminal prompt + Telegram in background]
+    D -->|Yes, no tmux| G[Telegram with buttons blocking]
+    F -->|You answer in terminal| H[Done]
+    F -->|No answer, Telegram response| H
+    G -->|Allow button| H
+    G -->|Deny button| I[Denied]
+    G -->|Timeout + retries exhausted| I
 ```
 
-The three-layer flow:
+**Two simple modes:**
 
-1. **Smart Filter** -- Classifies the operation by risk. Safe operations (`ls`, `cat`, `git status`, `Read`, `Grep`...) are auto-approved instantly. No notification, no delay.
-2. **Local Dialog** -- Dangerous operations show a native popup on your PC (Windows/Linux/macOS). If you respond within the timeout (default 30s), done. No Telegram needed.
-3. **Telegram** -- If the local dialog times out or is unavailable (SSH, no GUI), the request escalates to Telegram with inline Allow/Deny buttons, reminders, and retry mechanism.
+1. **Telegram OFF** (default) -- Safe ops auto-approved. Dangerous ops show Claude Code's normal terminal prompt. You type `y` or `n`.
+2. **Telegram ON** -- Safe ops auto-approved. Dangerous ops go to Telegram with Allow/Deny buttons. You tap from your phone.
 
 ---
 
 ## Smart Filtering
 
-Not every permission request is equal. `ls -la` is not `rm -rf /`. Smart filtering classifies operations by risk level and only bothers you when it matters.
+Not every operation is equal. The smart filter classifies operations by risk and only asks when it matters.
 
 ### Sensitivity Modes
 
 | Mode | Behavior | Use case |
 |------|----------|----------|
 | **`smart`** (default) | Auto-approves safe ops, asks for dangerous ones | Daily development |
-| `critical` | Only the most destructive ops need approval | Experienced users who trust their AI |
-| `all` | Everything goes to Telegram (v0.3 behavior) | Maximum control |
+| `critical` | Only the most destructive ops need approval | Experienced users |
+| `all` | Everything needs approval (no auto-approve) | Maximum control |
 
 ```bash
 export TELEGRAM_SENSITIVITY="smart"  # or "critical" or "all"
@@ -261,11 +237,13 @@ export TELEGRAM_SENSITIVITY="smart"  # or "critical" or "all"
 |----------|---------|
 | File inspection | `ls`, `cat`, `head`, `tail`, `wc`, `file`, `stat` |
 | Search | `grep`, `rg`, `find`, `which` |
-| Git (read-only) | `git status`, `git log`, `git diff`, `git branch` |
+| Git (read-only) | `git status`, `git log`, `git diff`, `git branch`, `git add`, `git commit` |
 | Package info | `npm list`, `pip list`, `pip freeze` |
 | System info | `ps`, `df`, `free`, `uname`, `whoami` |
 | Data processing | `jq`, `sort`, `uniq`, `cut`, `awk` |
-| Safe tools | Read, Glob, Grep, WebFetch, WebSearch |
+| File operations | `touch`, `mkdir`, `cp`, `mv`, `ln` |
+| Network (read-only) | `curl`, `wget` |
+| Safe tools | Read, Glob, Grep, WebFetch, WebSearch, Write/Edit (non-sensitive paths) |
 
 ### What Needs Approval
 
@@ -274,14 +252,14 @@ export TELEGRAM_SENSITIVITY="smart"  # or "critical" or "all"
 | Destructive | `rm`, `rmdir`, `shred` |
 | Privileged | `sudo`, `chmod`, `chown`, `kill` |
 | System | `systemctl`, `reboot`, `mkfs`, `dd` |
-| Git (write) | `git push`, `git reset`, `git merge`, `git clean` |
+| Git (write) | `git push`, `git reset`, `git rebase`, `git merge`, `git clean` |
 | Packages | `apt install`, `npm install`, `pip install` |
 | Docker | `docker rm`, `docker stop`, `docker prune` |
 | Sensitive files | `.env`, `.ssh/*`, `credentials`, `/etc/*` |
 
 ### Compound Commands
 
-Compound commands (`|`, `&&`, `||`, `;`) are analyzed by splitting into parts. If **any** sub-command is dangerous, the entire chain requires approval:
+Commands with `|`, `&&`, `||`, `;` are split and analyzed. If **any** part is dangerous, the whole chain needs approval:
 
 ```bash
 git add . && git push    # -> dangerous (git push)
@@ -291,63 +269,62 @@ ls -la && rm temp.txt    # -> dangerous (rm)
 
 ### Heredoc / Inline Script Analysis
 
-Python and Node.js inline scripts (`python3 -c "..."`, `python3 << 'EOF'`) are scanned for dangerous patterns like `os.remove`, `subprocess`, `shutil.rmtree`, `fs.unlinkSync`, etc.
+Python and Node.js inline scripts are scanned for dangerous patterns like `os.remove`, `subprocess`, `shutil.rmtree`, `fs.unlinkSync`, etc.
 
 ---
 
-## Local Dialog (PC-First)
+## Toggling Telegram
 
-When you're at your PC, you shouldn't have to reach for your phone. The hook can show a **native popup dialog** on your computer first, and only escalate to Telegram if you don't respond.
+Telegram is **OFF by default**. When off, dangerous operations simply show the normal terminal prompt.
 
-```
-Dangerous operation detected
-         |
-    [Phase 1: PC]
-    Native popup (Yes/No)
-    Timeout: 30 seconds
-         |
-    Responded -> done
-    Timeout ->
-         |
-    [Phase 2: Telegram]
-    Message with buttons
-    Timeout: 5 minutes
-```
+### Using `/telegram` (recommended)
 
-### Platform Support
+Inside Claude Code, type `/telegram` to get an interactive menu:
 
-| Platform | Method | Requirements |
-|----------|--------|-------------|
-| **WSL2** | Windows native popup via `powershell.exe` | None (built-in) |
-| **Linux** | `zenity` dialog | `apt install zenity` |
-| **macOS** | `osascript` dialog | None (built-in) |
-| **No GUI** | Skips to Telegram directly | -- |
+- When OFF: choose to activate with 30s, 60s, or 120s delay
+- When ON: choose to deactivate or change settings
 
-### Configuration
+### Using helper scripts
 
 ```bash
-export TELEGRAM_LOCAL_DELAY=30  # seconds for PC popup (0 = disable)
+# Enable Telegram
+./telegram-on.sh          # default: 120s timeout
+./telegram-on.sh 60       # custom timeout
+
+# Disable Telegram
+./telegram-off.sh
 ```
 
-Set to `0` to skip the local dialog and go straight to Telegram (useful for remote/headless servers).
+### Using the flag file directly
+
+```bash
+# Enable (number = Telegram timeout in seconds for blocking mode)
+echo 120 > /tmp/claude_telegram_active
+
+# Disable
+rm -f /tmp/claude_telegram_active
+
+# Check status
+cat /tmp/claude_telegram_active 2>/dev/null && echo "ON" || echo "OFF"
+```
 
 ---
 
 ## Features
 
-- **Smart filtering** -- Safe operations are auto-approved. Only dangerous ones need your attention.
-- **Local dialog** -- PC popup before Telegram. Answer from your screen without touching your phone.
-- **Phone-based approvals** -- Tap Allow or Deny from anywhere. No terminal needed.
+- **Smart filtering** -- Safe operations run autonomously. Only dangerous ones ask for permission.
+- **Telegram toggle** -- Enable/disable Telegram anytime with `/telegram`, helper scripts, or a flag file.
+- **Terminal-first** -- When Telegram is off, dangerous ops ask in the terminal like normal.
+- **Phone-based approvals** -- When Telegram is on, tap Allow or Deny from anywhere.
 - **Inline keyboard buttons** -- One tap. No typing.
 - **Rich context** -- See the exact command, file path, or URL before you decide.
-- **Tool-aware formatting** -- Bash commands, file writes, edits, web fetches, and searches are each formatted to highlight the most important details.
-- **Smart reminders** -- Phone buzzes again at 60s and 90s if you haven't responded. No more missed notifications.
-- **Retry after timeout** -- Missed the window? A Retry button appears so you can get the permission request again without losing your Claude session.
-- **Timeout protection** -- No response within the timeout? Action is auto-denied. Claude Code never hangs.
-- **Bilingual text fallback** -- Besides buttons, you can type "yes", "no", "si", "dale", "cancel" and more, in English or Spanish.
+- **Smart reminders** -- Phone buzzes again at halfway and near timeout if you haven't responded.
+- **Retry after timeout** -- Missed the window? A Retry button appears so you can get the request again.
+- **Timeout protection** -- No response after retries? Auto-denied. Claude Code never hangs.
+- **Bilingual fallback** -- Type "yes", "no", "si", "dale", "cancel" and more, in English or Spanish.
 - **Security validation** -- Only responses from your authorized Chat ID are accepted.
-- **Configurable fallback** -- Choose whether errors (network issues, missing tools) result in allow or deny.
-- **Structured logging** -- Every decision is logged for debugging and auditing.
+- **Configurable fallback** -- Choose whether errors result in allow or deny.
+- **Structured logging** -- Every decision is logged for debugging.
 - **Zero infrastructure** -- No servers, no databases, no Docker, no cloud.
 - **Single file** -- One Bash script. That's the entire hook.
 - **Free forever** -- Telegram's Bot API costs nothing.
@@ -356,13 +333,9 @@ Set to `0` to skip the local dialog and go straight to Telegram (useful for remo
 
 ## Known Limitation: Multi-Agent Teams
 
-> **Important:** If you use Claude Code's **Agent Teams** (multi-agent system with `Task` tool and `TeamCreate`), be aware that **permission requests from subagents do NOT trigger the `PermissionRequest` hook**. Instead, they appear as standard terminal prompts in the parent session.
+> **Important:** If you use Claude Code's **Agent Teams** (multi-agent with `Task` and `TeamCreate`), **subagent permission requests do NOT trigger `PreToolUse` hooks**. They appear as standard terminal prompts in the parent session.
 >
-> This means subagent actions will show the traditional `"Do you want to proceed? [y/n]"` dialog in your terminal instead of sending a Telegram notification.
->
-> **Why?** When a subagent needs permission, the request is delegated to the parent session's UI, bypassing the hook pipeline entirely. This is a current limitation of Claude Code's hook system, not of this project.
->
-> **Workaround:** Pre-approve the commands your agents commonly use in your `settings.json` permissions so they don't need to ask:
+> **Workaround:** Pre-approve common commands in your `settings.json`:
 >
 > ```json
 > {
@@ -377,8 +350,6 @@ Set to `0` to skip the local dialog and go straight to Telegram (useful for remo
 >   }
 > }
 > ```
->
-> This way, subagents can work autonomously without blocking on terminal prompts.
 
 ---
 
@@ -391,63 +362,47 @@ All settings are environment variables with sensible defaults:
 | `TELEGRAM_BOT_TOKEN` | Yes | -- | Bot token from @BotFather |
 | `TELEGRAM_CHAT_ID` | Yes | -- | Your Telegram user ID (numeric) |
 | `TELEGRAM_SENSITIVITY` | No | `smart` | Filtering mode: `all`, `smart`, or `critical` |
-| `TELEGRAM_LOCAL_DELAY` | No | `30` | Seconds for PC popup dialog (`0` = disable) |
-| `TELEGRAM_PERMISSION_TIMEOUT` | No | `300` | Seconds to wait for Telegram response before offering retry |
-| `TELEGRAM_MAX_RETRIES` | No | `2` | How many times to offer a Retry button after timeout |
-| `TELEGRAM_FALLBACK_ON_ERROR` | No | `allow` | What happens if the hook errors out: `allow` or `deny` |
-| `TELEGRAM_HOOK_LOG` | No | `/tmp/telegram_claude_hook.log` | Log file path. Set to empty string to disable |
+| `TELEGRAM_PERMISSION_TIMEOUT` | No | `300` | Seconds to wait for Telegram response |
+| `TELEGRAM_MAX_RETRIES` | No | `2` | Retry attempts after Telegram timeout |
+| `TELEGRAM_FALLBACK_ON_ERROR` | No | `allow` | What happens if the hook errors: `allow` or `deny` |
+| `TELEGRAM_HOOK_LOG` | No | `/tmp/telegram_claude_hook.log` | Log file path (empty = disable) |
 
-### Example: Smart filtering with strict fallback
+### Example: Smart filtering (default)
 
 ```bash
-export TELEGRAM_BOT_TOKEN="7012345678:AAH1bmFnZ2luZy1hLWJvdC10b2tlbi1oZXJl"
+export TELEGRAM_BOT_TOKEN="7012345678:AAH..."
 export TELEGRAM_CHAT_ID="123456789"
 export TELEGRAM_SENSITIVITY="smart"
-export TELEGRAM_LOCAL_DELAY="30"
-export TELEGRAM_PERMISSION_TIMEOUT="300"
-export TELEGRAM_FALLBACK_ON_ERROR="deny"
-export TELEGRAM_HOOK_LOG="$HOME/.claude/logs/telegram_hook.log"
+# Telegram OFF by default. Use /telegram to enable when needed.
 ```
 
-### Example: Maximum control (v0.3 behavior)
+### Example: Maximum control
 
 ```bash
-export TELEGRAM_SENSITIVITY="all"     # Everything goes to Telegram
-export TELEGRAM_LOCAL_DELAY="0"       # No PC popup
-export TELEGRAM_PERMISSION_TIMEOUT="120"
-```
-
-### Example: Minimal interruptions
-
-```bash
-export TELEGRAM_SENSITIVITY="critical"  # Only rm, sudo, git push, etc.
-export TELEGRAM_LOCAL_DELAY="15"        # Quick 15s popup
+export TELEGRAM_SENSITIVITY="all"             # Everything needs approval
+export TELEGRAM_PERMISSION_TIMEOUT="120"      # Shorter timeout
+# Then enable Telegram: echo 120 > /tmp/claude_telegram_active
 ```
 
 ---
 
 ## Automated Installer
 
-Don't want to do the steps manually? Use the included installer:
-
 ```bash
-# Option 1: Run directly from the repo
 git clone https://github.com/webcomunicasolutions/claude-telegram-hook.git
 cd claude-telegram-hook
 ./install.sh
-
-# Option 2: One-liner
-curl -fsSL https://raw.githubusercontent.com/webcomunicasolutions/claude-telegram-hook/main/install.sh | bash
 ```
 
 The installer will:
 
 - Check that `curl` and `jq` are installed
-- Prompt you for your bot token and chat ID
-- Copy the hook script to `~/.claude/hooks/`
+- Prompt for your bot token and chat ID
+- Ask your preferred sensitivity mode
+- Copy the hook to `~/.claude/hooks/`
 - Add environment variables to your shell profile
 - Update your Claude Code `settings.json`
-- Send a test message to your Telegram to confirm everything works
+- Send a test message to Telegram
 
 ---
 
@@ -455,43 +410,33 @@ The installer will:
 
 ### I don't get any message on Telegram
 
-1. **Did you send `/start` to your bot?** Bots can't message you until you initiate. Open a chat with your bot and send `/start`.
-2. **Is your token correct?** Test it:
+1. **Did you enable Telegram?** It's OFF by default. Use `/telegram` or `echo 120 > /tmp/claude_telegram_active`.
+2. **Did you send `/start` to your bot?** Bots can't message you until you initiate.
+3. **Is your token correct?**
    ```bash
    curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" | jq .
    ```
-   You should see your bot's info. If you get `"ok": false`, the token is wrong.
-3. **Is your Chat ID correct?** Send a message to your bot, then run:
+4. **Is your Chat ID correct?**
    ```bash
    curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates" | jq '.result[-1].message.chat.id'
    ```
-   The returned number must match your `TELEGRAM_CHAT_ID`.
 
 ### Claude Code ignores the hook
 
-- Verify your `settings.json` is valid JSON (no trailing commas, proper nesting).
-- Make sure the hook is under `PermissionRequest` in your `settings.json`.
+- Verify `settings.json` has the hook under `PreToolUse` (not `PermissionRequest`).
+- Ensure `"defaultMode": "default"` in your permissions settings.
 - Check the script is executable: `ls -la ~/.claude/hooks/hook_permission_telegram.sh`.
 - Restart Claude Code after editing `settings.json`.
 
-### The hook times out before I can respond
+### Everything gets auto-approved (no terminal prompt)
 
-The hook sends you reminders at 60s and 90s, and offers a Retry button when the timeout expires. If you still need more time, you can:
-
-1. Increase the per-round timeout:
-   ```bash
-   export TELEGRAM_PERMISSION_TIMEOUT=300  # 5 minutes per round
-   ```
-2. Increase the number of retries:
-   ```bash
-   export TELEGRAM_MAX_RETRIES=3  # 3 retry rounds
-   ```
-3. Make sure the `timeout` in `settings.json` is high enough to cover all rounds (e.g., `600`).
+- Make sure `"defaultMode": "default"` is set (not `"acceptEdits"`).
+- Check that dangerous commands are NOT in your permissions allow list.
 
 ### Buttons appear but nothing happens when I tap
 
-- Make sure you're tapping buttons on the **most recent** message. Old messages have expired polling sessions.
-- Verify your Chat ID matches -- the hook ignores callbacks from unauthorized users.
+- Tap buttons on the **most recent** message. Old messages have expired sessions.
+- Verify your Chat ID matches.
 
 ### "jq: command not found"
 
@@ -503,21 +448,7 @@ sudo apt-get install -y jq
 brew install jq
 ```
 
-### Claude Code's sandbox blocks the request
-
-Add `api.telegram.org` to the allowed network domains in `settings.json`:
-
-```json
-{
-  "network": {
-    "allowedDomains": ["api.telegram.org"]
-  }
-}
-```
-
 ### Checking the logs
-
-The hook writes detailed logs by default:
 
 ```bash
 tail -f /tmp/telegram_claude_hook.log
@@ -527,53 +458,35 @@ tail -f /tmp/telegram_claude_hook.log
 
 ## FAQ
 
-**Q: Is my bot token safe?**
-A: Your bot token lets someone send messages *as* your bot, but the hook only ever messages your own Chat ID and only accepts responses from that same ID. Still, treat it like any credential: keep it in environment variables, never commit it to git. If compromised, revoke it instantly in @BotFather with `/revokenewtoken`.
+**Q: Is Telegram required?**
+A: No. Telegram is OFF by default. Without Telegram, the hook still provides smart filtering: safe operations are auto-approved and dangerous ones show a normal terminal prompt. Telegram is only for when you want to approve from your phone.
 
-**Q: What if I lose internet on my phone?**
-A: The hook times out after `TELEGRAM_PERMISSION_TIMEOUT` seconds. But don't worry -- it will offer you a Retry button (up to `TELEGRAM_MAX_RETRIES` times) so you get another chance. If all retries expire, the action is auto-denied. Claude Code won't hang. You can also respond from Telegram Desktop, Telegram Web, or any device where you're logged in.
+**Q: Is my bot token safe?**
+A: The hook only messages your Chat ID and only accepts responses from that ID. Still, treat it like any credential: keep it in environment variables, never commit to git. Revoke in @BotFather if compromised.
 
 **Q: Will this slow Claude Code down?**
-A: The hook adds exactly the time it takes you to tap a button. Claude Code already pauses on permission requests -- this just moves the pause from your terminal to your phone.
+A: No. Safe operations are auto-approved instantly (no network call). Dangerous operations only add the time it takes you to respond -- same as without the hook, but now you can respond from your phone.
 
 **Q: Can I approve from multiple devices?**
-A: Yes. Telegram delivers to all your logged-in devices. Tap Allow from whichever you see first -- phone, tablet, desktop app, or web client.
-
-**Q: Can I use a Telegram group instead of a direct message?**
-A: Yes. Use the group's chat ID as `TELEGRAM_CHAT_ID` and make sure the bot is a member with permission to send messages.
+A: Yes. Telegram delivers to all your devices. Tap Allow from whichever you see first.
 
 **Q: Does this work on Windows (WSL)?**
-A: Yes. Claude Code runs in WSL, which has `curl` and supports `jq`. The hook works identically.
+A: Yes. Claude Code runs in WSL, which has `curl` and `jq`. Works identically.
 
-**Q: What about Telegram rate limits?**
-A: Telegram allows roughly 30 messages per second per bot. For a single developer approving Claude Code actions, you'll never come close.
+**Q: Can I auto-approve specific tools?**
+A: Yes. The smart filter auto-approves Read, Glob, Grep, WebFetch, WebSearch, and many Bash commands by default. You can also use Claude Code's built-in permissions allow list for additional control.
 
-**Q: Can I auto-approve certain tools?**
-A: Yes, and with v0.4.0 the hook does this automatically. Set `TELEGRAM_SENSITIVITY="smart"` (the default) and safe tools like `Read`, `Glob`, `Grep`, `ls`, `cat`, and `git status` are auto-approved without any notification. You can also use the `"matcher"` in `settings.json` for additional control.
+**Q: What's the difference between `smart` and `critical`?**
+A: `smart` = everything safe unless explicitly dangerous (conservative). `critical` = everything safe unless explicitly very dangerous (permissive).
 
-**Q: What's the difference between `smart` and `critical` sensitivity?**
-A: In `smart` mode, anything not explicitly safe requires approval (conservative). In `critical` mode, anything not explicitly dangerous is auto-approved (permissive). Use `smart` for daily work, `critical` when you trust your AI and want minimal interruptions.
-
-**Q: Can I disable the local PC popup?**
-A: Yes. Set `TELEGRAM_LOCAL_DELAY=0` and all dangerous operations go directly to Telegram without a PC popup.
-
-**Q: Does the local dialog work over SSH?**
-A: No. The local dialog requires a graphical display (WSL2 with Windows desktop, Linux with X11/Wayland, or macOS). Over SSH without display forwarding, it automatically skips to Telegram.
-
-**Q: Can I customize the message format?**
-A: Absolutely. The message template lives inside the hook script. Edit it to change the layout, add timestamps, include session IDs, or anything else you want.
-
-**Q: Does this work with Claude Code teams or shared sessions?**
-A: Each person sets up their own bot and chat ID. The hook runs locally on whoever launched Claude Code.
-
-**Q: Does this work with Claude Code's multi-agent teams (Agent Teams)?**
-A: Partially. The main session's permission requests go to Telegram as expected. However, **subagent permission requests bypass the hook** and fall back to terminal prompts. This is a Claude Code limitation, not ours. See the [Known Limitation](#known-limitation-multi-agent-teams) section above for details and workarounds.
+**Q: Does this work with multi-agent teams?**
+A: The main session works fine. Subagent permissions bypass hooks -- see [Known Limitation](#known-limitation-multi-agent-teams).
 
 ---
 
 ## Bonus: Use It Beyond Claude Code
 
-The Telegram approval pattern is not limited to Claude Code. We ship a **standalone Bash library** (`telegram_approve.sh`) you can `source` from any script -- backup jobs, deploys, cron tasks, server maintenance, anything.
+The Telegram approval pattern is not limited to Claude Code. We ship a **standalone Bash library** (`telegram_approve.sh`) you can `source` from any script.
 
 ### Quick Start
 
@@ -615,38 +528,16 @@ See the [`examples/`](examples/) directory:
 | [`server_maintenance.sh`](examples/server_maintenance.sh) | Disk alert with multiple action choices |
 | [`cron_notification.sh`](examples/cron_notification.sh) | Simple notification after a cron job |
 
-```bash
-# Try an example
-export TELEGRAM_BOT_TOKEN="your-token"
-export TELEGRAM_CHAT_ID="your-chat-id"
-bash examples/backup_with_approval.sh /var/www
-```
-
 ---
 
 ## Contributing
 
-Contributions are welcome. This project prizes simplicity above everything -- a PR that adds a server, a database, or a `package.json` will be politely declined.
-
-Great contributions:
-
-- Bug fixes
-- Better message formatting
-- New language support for text responses
-- Documentation improvements
-- Translations (see [README_ES.md](README_ES.md))
+Contributions are welcome. This project prizes simplicity -- a PR that adds a server or a `package.json` will be politely declined.
 
 ```bash
-# Fork, clone, branch
-git checkout -b my-improvement
-
-# Test manually by piping JSON to the hook
-echo '{"tool_name":"Bash","tool_input":{"command":"ls -la"},"session_id":"test"}' \
+# Test by piping JSON to the hook
+echo '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}' \
   | bash hook_permission_telegram.sh
-
-# Commit and open a PR
-git commit -m "Describe what you improved"
-git push origin my-improvement
 ```
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
@@ -672,7 +563,7 @@ Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 ---
 
 <p align="center">
-<b>Stop watching the terminal. Start living.</b>
+<b>Safe ops run free. Dangerous ops ask nicely.</b>
 <br><br>
 <a href="https://github.com/webcomunicasolutions/claude-telegram-hook">github.com/webcomunicasolutions/claude-telegram-hook</a>
 </p>

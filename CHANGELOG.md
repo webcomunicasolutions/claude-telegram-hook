@@ -9,26 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Smart filtering**: Three sensitivity modes (`smart`, `critical`, `all`) via `TELEGRAM_SENSITIVITY`
-  - `smart` (default): Auto-approves safe operations (ls, cat, git status, Read, Grep, etc.), sends dangerous ones to approval
+  - `smart` (default): Auto-approves safe operations (ls, cat, git status, Read, Grep, etc.), dangerous ones go to terminal or Telegram
   - `critical`: Only the most destructive operations (rm, sudo, git push, etc.) require approval
-  - `all`: Everything goes to Telegram (v0.3 backward-compatible behavior)
+  - `all`: Everything needs approval (no auto-approve)
 - **Risk classification engine**: Functions `classify_risk`, `is_safe_bash_command`, `is_dangerous_command`, `has_dangerous_heredoc`, `touches_sensitive_path`, `has_dangerous_subcommand`
 - **Compound command analysis**: Splits piped/chained commands and flags the chain as dangerous if any sub-command is dangerous
 - **Heredoc/inline script scanning**: Detects dangerous patterns in Python and Node.js inline scripts (os.remove, subprocess, shutil.rmtree, fs.unlinkSync, etc.)
 - **Sensitive path detection**: Blocks auto-approval for writes to `.env`, `.ssh/*`, `credentials`, `/etc/*`, and similar paths
-- **Local dialog (PC-first)**: Native popup on your PC before escalating to Telegram, via `TELEGRAM_LOCAL_DELAY`
-  - WSL2: Windows popup via `powershell.exe` + `WScript.Shell.Popup()`
-  - Linux: `zenity --question` with timeout
-  - macOS: `osascript` dialog with timeout
-  - No GUI: Skips to Telegram directly
-- New environment variables: `TELEGRAM_SENSITIVITY`, `TELEGRAM_LOCAL_DELAY`
-- Installer: new steps for sensitivity mode and local dialog configuration
-- FAQ entries for smart filtering, sensitivity modes, and local dialog in both READMEs
+- **Telegram toggle**: Simple on/off control via flag file (`/tmp/claude_telegram_active`)
+  - Enable: `echo 120 > /tmp/claude_telegram_active` (or use `/telegram` slash command)
+  - Disable: `rm -f /tmp/claude_telegram_active` (or use `/telegram` slash command)
+- **`/telegram` slash command** for Claude Code: interactive menu to toggle Telegram on/off from within a session
+- Helper scripts: `telegram-on.sh` and `telegram-off.sh` for quick toggle
+- **tmux hybrid mode**: When tmux is available and Telegram is enabled, terminal prompt + background Telegram escalation
+- **Blocking Telegram mode**: When tmux is not available and Telegram is enabled, classic blocking Telegram with buttons (v0.3 behavior)
 
 ### Changed
+- **Hook event changed from `PermissionRequest` to `PreToolUse`**: fires on every tool use, enabling smart filtering to auto-approve safe operations silently
 - Default `TELEGRAM_PERMISSION_TIMEOUT` increased from `120` to `300` (5 minutes)
-- Hook main flow restructured into three layers: Filter -> Local Dialog -> Telegram
-- Installer summary now shows sensitivity mode and local dialog timeout
+- Hook main flow simplified to: Smart Filter -> Terminal prompt (default) or Telegram (when enabled)
+- Removed local popup/dialog system (no more `TELEGRAM_LOCAL_DELAY`)
+- `defaultMode: "default"` required in settings.json for terminal prompts to work correctly
+
+### Removed
+- Local dialog / PC popup feature (`TELEGRAM_LOCAL_DELAY` env var)
+- Platform-specific popup code (WSL2 powershell, zenity, osascript)
 
 ## [0.3.0] - 2026-02-07
 
