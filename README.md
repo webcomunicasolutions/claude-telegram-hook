@@ -224,7 +224,7 @@ flowchart TD
     F -->|No answer, Telegram response| H
     G -->|Allow button| H
     G -->|Deny button| I[Denied]
-    G -->|Timeout + retries exhausted| I
+    G -->|Timeout + relaunches exhausted| I
 ```
 
 **Two simple modes:**
@@ -298,33 +298,29 @@ Telegram is **OFF by default**. When off, dangerous operations simply show the n
 
 ### Using `/telegram` (recommended)
 
-Inside Claude Code, type `/telegram` to get an interactive menu:
+Inside Claude Code, type `/telegram`. It's a simple toggle:
 
-- When OFF: choose to activate with 30s, 60s, or 120s delay
-- When ON: choose to deactivate or change settings
+- If OFF -> turns ON
+- If ON -> turns OFF
 
 ### Using helper scripts
 
 ```bash
-# Enable Telegram
-./telegram-on.sh          # default: 120s timeout
-./telegram-on.sh 60       # custom timeout
-
-# Disable Telegram
-./telegram-off.sh
+./telegram-on.sh     # Enable
+./telegram-off.sh    # Disable
 ```
 
 ### Using the flag file directly
 
 ```bash
-# Enable (number = Telegram timeout in seconds for blocking mode)
+# Enable
 touch /tmp/claude_telegram_active
 
 # Disable
 rm -f /tmp/claude_telegram_active
 
 # Check status
-cat /tmp/claude_telegram_active 2>/dev/null && echo "ON" || echo "OFF"
+[ -f /tmp/claude_telegram_active ] && echo "ON" || echo "OFF"
 ```
 
 ---
@@ -382,9 +378,9 @@ All settings are environment variables with sensible defaults:
 | `TELEGRAM_CHAT_ID` | Yes | -- | Your Telegram user ID (numeric) |
 | `TELEGRAM_SENSITIVITY` | No | `smart` | Filtering mode: `all`, `smart`, or `critical` |
 | `TELEGRAM_PERMISSION_TIMEOUT` | No | `300` | Seconds to wait for Telegram response |
-| `TELEGRAM_MAX_RETRIES` | No | `2` | Retry attempts after Telegram timeout |
+| `TELEGRAM_MAX_RETRIES` | No | `2` | Relaunch attempts after Telegram timeout |
 | `TELEGRAM_FALLBACK_ON_ERROR` | No | `allow` | What happens if the hook errors: `allow` or `deny` |
-| `TELEGRAM_HOOK_LOG` | No | `/tmp/telegram_claude_hook.log` | Log file path (empty = disable) |
+| `TELEGRAM_HOOK_LOG` | No | `/tmp/claude/telegram_claude_hook.log` | Log file path (empty = disable) |
 
 ### Example: Smart filtering (default)
 
@@ -415,13 +411,16 @@ cd claude-telegram-hook
 
 The installer will:
 
-- Check that `curl` and `jq` are installed
-- Prompt for your bot token and chat ID
-- Ask your preferred sensitivity mode
-- Copy the hook to `~/.claude/hooks/`
-- Add environment variables to your shell profile
-- Update your Claude Code `settings.json`
-- Send a test message to Telegram
+1. Check that `curl` and `jq` are installed
+2. Prompt for your bot token and chat ID
+3. Ask your preferred sensitivity mode
+4. Copy the hook to `~/.claude/hooks/`
+5. Create `.env` file with your credentials
+6. Create a wrapper script that loads the `.env`
+7. Update your Claude Code `settings.json` (hook, permissions, sandbox)
+8. Install the `/telegram` skill for easy ON/OFF toggling
+9. Send a test message to Telegram
+10. **Restart Claude Code** and you're ready to go!
 
 ---
 
@@ -456,6 +455,7 @@ The installer will:
 
 - Tap buttons on the **most recent** message. Old messages have expired sessions.
 - Verify your Chat ID matches.
+- Make sure `"timeout": 600` is set in the hook config in `settings.json`. Without it, Claude Code kills the hook before you can respond.
 
 ### "jq: command not found"
 
@@ -470,7 +470,7 @@ brew install jq
 ### Checking the logs
 
 ```bash
-tail -f /tmp/telegram_claude_hook.log
+tail -f /tmp/claude/telegram_claude_hook.log
 ```
 
 ---

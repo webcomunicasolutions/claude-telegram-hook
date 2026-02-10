@@ -456,6 +456,28 @@ configure_settings() {
     fi
 }
 
+install_skill() {
+    step "Installing /telegram skill..."
+
+    local skill_dir="$CLAUDE_DIR/skills/telegram"
+    local skill_source="$SCRIPT_DIR/skills/telegram/SKILL.md"
+
+    if [ ! -f "$skill_source" ]; then
+        warn "SKILL.md not found in repo. Skipping skill installation."
+        return 0
+    fi
+
+    mkdir -p "$skill_dir"
+
+    if [ -f "$skill_dir/SKILL.md" ]; then
+        info "Updating existing /telegram skill..."
+    fi
+
+    cp "$skill_source" "$skill_dir/SKILL.md"
+    success "Installed /telegram skill to $skill_dir/SKILL.md"
+    info "Use /telegram inside Claude Code to toggle Telegram ON/OFF"
+}
+
 test_telegram_connection() {
     step "Testing Telegram bot connection..."
 
@@ -492,7 +514,7 @@ This chat will receive permission requests from Claude Code when Telegram mode i
 - Safe operations (ls, cat, git status) are auto-approved silently
 - Dangerous operations ask in your terminal by default
 - Use <code>/telegram</code> in Claude Code to enable Telegram approvals
-- Or run: <code>echo 120 > /tmp/claude_telegram_active</code>"
+- Or run: <code>touch /tmp/claude_telegram_active</code>"
 
     local send_response
     send_response=$(curl -s -m 10 -X POST "${api_url}/sendMessage" \
@@ -541,8 +563,8 @@ print_summary() {
     echo -e "    Telegram: ${DIM}OFF by default${NC}"
     echo ""
     echo -e "  ${BOLD}To enable Telegram approvals:${NC}"
-    echo -e "    ${CYAN}/telegram${NC}  (inside Claude Code -- interactive menu)"
-    echo -e "    ${CYAN}echo 120 > /tmp/claude_telegram_active${NC}  (from terminal)"
+    echo -e "    ${CYAN}/telegram${NC}  (inside Claude Code -- simple toggle)"
+    echo -e "    ${CYAN}touch /tmp/claude_telegram_active${NC}  (from terminal)"
     echo ""
     echo -e "  ${BOLD}Next steps:${NC}"
     echo -e "    ${YELLOW}1.${NC} Restart Claude Code for the hook to take effect."
@@ -551,7 +573,7 @@ print_summary() {
     echo -e "    ${YELLOW}4.${NC} Use ${CYAN}/telegram${NC} when you want to approve from your phone."
     echo ""
     echo -e "  ${BOLD}Troubleshooting:${NC}"
-    echo -e "    Logs: ${CYAN}/tmp/telegram_claude_hook.log${NC}"
+    echo -e "    Logs: ${CYAN}/tmp/claude/telegram_claude_hook.log${NC}"
     echo -e "    Test: ${CYAN}echo '{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"}}' | bash $WRAPPER_SCRIPT${NC}"
     echo ""
     echo -e "  ${BOLD}Uninstall:${NC}"
@@ -611,6 +633,14 @@ uninstall() {
                 removed=1
             fi
         done
+    fi
+
+    # Remove /telegram skill
+    local skill_dir="$CLAUDE_DIR/skills/telegram"
+    if [ -d "$skill_dir" ]; then
+        rm -rf "$skill_dir"
+        success "Removed /telegram skill from $skill_dir"
+        removed=1
     fi
 
     # Remove flag file
@@ -687,10 +717,13 @@ main() {
     # Step 9: Configure settings.json
     configure_settings
 
-    # Step 10: Test Telegram connection
+    # Step 10: Install /telegram skill
+    install_skill
+
+    # Step 11: Test Telegram connection
     test_telegram_connection || true
 
-    # Step 11: Print summary
+    # Step 12: Print summary
     print_summary
 }
 

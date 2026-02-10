@@ -273,33 +273,29 @@ Telegram esta **OFF por defecto**. Cuando esta apagado, las operaciones peligros
 
 ### Usando `/telegram` (recomendado)
 
-Dentro de Claude Code, escribe `/telegram` para un menu interactivo:
+Dentro de Claude Code, escribe `/telegram`. Es un simple toggle:
 
-- Si esta OFF: opciones para activar con 30s, 60s, o 120s de timeout
-- Si esta ON: opciones para desactivar o cambiar configuracion
+- Si esta OFF -> se activa
+- Si esta ON -> se desactiva
 
 ### Usando scripts auxiliares
 
 ```bash
-# Activar Telegram
-./telegram-on.sh          # default: 120s timeout
-./telegram-on.sh 60       # timeout personalizado
-
-# Desactivar Telegram
-./telegram-off.sh
+./telegram-on.sh     # Activar
+./telegram-off.sh    # Desactivar
 ```
 
 ### Usando el archivo flag directamente
 
 ```bash
-# Activar (numero = timeout de Telegram en segundos)
+# Activar
 touch /tmp/claude_telegram_active
 
 # Desactivar
 rm -f /tmp/claude_telegram_active
 
 # Ver estado
-cat /tmp/claude_telegram_active 2>/dev/null && echo "ON" || echo "OFF"
+[ -f /tmp/claude_telegram_active ] && echo "ON" || echo "OFF"
 ```
 
 ---
@@ -355,7 +351,7 @@ cat /tmp/claude_telegram_active 2>/dev/null && echo "ON" || echo "OFF"
 | `TELEGRAM_PERMISSION_TIMEOUT` | No | `300` | Segundos de espera en Telegram |
 | `TELEGRAM_MAX_RETRIES` | No | `2` | Relanzamientos tras timeout de Telegram |
 | `TELEGRAM_FALLBACK_ON_ERROR` | No | `allow` | Que hacer si el hook falla: `allow` o `deny` |
-| `TELEGRAM_HOOK_LOG` | No | `/tmp/telegram_claude_hook.log` | Archivo de log (vacio = desactivar) |
+| `TELEGRAM_HOOK_LOG` | No | `/tmp/claude/telegram_claude_hook.log` | Archivo de log (vacio = desactivar) |
 
 ---
 
@@ -373,9 +369,12 @@ El instalador te guia paso a paso:
 2. Te pide tu token de bot y chat ID.
 3. Te pregunta el modo de sensibilidad preferido.
 4. Copia el hook a `~/.claude/hooks/`.
-5. Configura las variables de entorno.
-6. Actualiza tu `settings.json`.
-7. Envia un mensaje de prueba a Telegram.
+5. Crea el archivo `.env` con tus credenciales.
+6. Crea un wrapper script que carga el `.env`.
+7. Actualiza tu `settings.json` (hook, permisos, sandbox).
+8. Instala el skill `/telegram` para activar/desactivar facilmente.
+9. Envia un mensaje de prueba a Telegram.
+10. **Reinicia Claude Code** y listo!
 
 ---
 
@@ -406,6 +405,12 @@ El instalador te guia paso a paso:
 - Verifica `"defaultMode": "default"` (no `"acceptEdits"`).
 - Comprueba que los comandos peligrosos NO estan en tu lista de permisos allow.
 
+### Los botones aparecen pero no pasa nada al tocar
+
+- Toca los botones del mensaje **mas reciente**. Los mensajes viejos tienen sesiones expiradas.
+- Verifica que tu Chat ID es correcto.
+- Asegurate de tener `"timeout": 600` en la config del hook en `settings.json`. Sin esto, Claude Code mata el hook antes de que puedas responder.
+
 ### Error "jq: command not found"
 
 ```bash
@@ -416,7 +421,7 @@ brew install jq                # macOS
 ### Ver los logs
 
 ```bash
-tail -f /tmp/telegram_claude_hook.log
+tail -f /tmp/claude/telegram_claude_hook.log
 ```
 
 ---
