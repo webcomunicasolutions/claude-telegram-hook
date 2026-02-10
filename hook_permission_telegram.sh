@@ -12,12 +12,13 @@
 #      - Telegram only: blocking Telegram with buttons (classic v0.3 behavior)
 #
 # Telegram mode is controlled by a flag file:
-#   Enable:  echo 120 > /tmp/claude_telegram_active   (120 = delay seconds)
+#   Enable:  touch /tmp/claude_telegram_active
 #   Disable: rm -f /tmp/claude_telegram_active
 #
-# When in tmux + Telegram enabled: terminal prompt first, Telegram after delay,
-# tmux send-keys bridges the response back to terminal.
-# When NOT in tmux + Telegram enabled: blocking Telegram (no terminal prompt).
+# When NOT in tmux + Telegram enabled: blocking Telegram with reminders
+#   at 60s, 120s, and 60s before timeout. Relaunch button on expiry.
+# When in tmux + Telegram enabled: terminal prompt first, Telegram after 120s,
+#   tmux send-keys bridges the response back to terminal.
 #
 # Sensitivity modes (TELEGRAM_SENSITIVITY):
 #   all      - Everything is "dangerous" (no auto-approve)
@@ -38,19 +39,13 @@ LOG_FILE="${TELEGRAM_HOOK_LOG:-/tmp/claude/telegram_claude_hook.log}"
 SENSITIVITY="${TELEGRAM_SENSITIVITY:-smart}"
 MAX_RETRIES="${TELEGRAM_MAX_RETRIES:-2}"
 
-# Telegram mode flag file
+# Telegram mode flag file (exists = ON, absent = OFF)
 TELEGRAM_FLAG="/tmp/claude_telegram_active"
 
 # Determine Telegram mode
 TELEGRAM_ENABLED=false
-TELEGRAM_DELAY=120
 if [ -f "$TELEGRAM_FLAG" ]; then
     TELEGRAM_ENABLED=true
-    TELEGRAM_DELAY=$(cat "$TELEGRAM_FLAG" 2>/dev/null | tr -d '[:space:]')
-    # Default to 120 if file is empty or not a number
-    if ! [ "$TELEGRAM_DELAY" -gt 0 ] 2>/dev/null; then
-        TELEGRAM_DELAY=120
-    fi
 fi
 
 # Only set API URL if bot token is available
@@ -332,22 +327,29 @@ wait_for_response() {
     local offset="$1"
     local timeout="$2"
     local elapsed=0
-    local reminder_1=$((timeout / 2))
-    local reminder_2=$((timeout - 30))
-    local sent_r1=0 sent_r2=0
+
+    # Reminder schedule: at 60s, 120s, and 60s before timeout
+    local r1=60
+    local r2=120
+    local r3=$((timeout - 60))
+    local sent_r1=0 sent_r2=0 sent_r3=0
 
     while [ $elapsed -lt $timeout ]; do
         local remaining=$((timeout - elapsed))
         local this_poll=$POLL_TIMEOUT
         [ $remaining -lt $this_poll ] && this_poll=$remaining
 
-        if [ $sent_r1 -eq 0 ] && [ $elapsed -ge $reminder_1 ]; then
-            send_telegram "⏰ ${remaining}s left to respond"
+        if [ $sent_r1 -eq 0 ] && [ $elapsed -ge $r1 ] && [ $r1 -lt $timeout ]; then
+            send_telegram "⏳ Pending permission. ${remaining}s remaining"
             sent_r1=1
         fi
-        if [ $sent_r2 -eq 0 ] && [ $elapsed -ge $reminder_2 ]; then
-            send_telegram "🚨 Last ${remaining}s!"
+        if [ $sent_r2 -eq 0 ] && [ $elapsed -ge $r2 ] && [ $r2 -lt $r3 ]; then
+            send_telegram "⏰ Still waiting. ${remaining}s remaining"
             sent_r2=1
+        fi
+        if [ $sent_r3 -eq 0 ] && [ $elapsed -ge $r3 ] && [ $r3 -gt $r2 ]; then
+            send_telegram "🚨 Last ${remaining}s to respond!"
+            sent_r3=1
         fi
 
         local response
@@ -430,7 +432,7 @@ build_permission_message() {
     echo "$message"
 }
 
-send_retry_button() {
+send_relaunch_button() {
     local text="$1"
     curl -s -X POST "${TELEGRAM_API}/sendMessage" \
         -H "Content-Type: application/json" \
@@ -443,7 +445,7 @@ send_retry_button() {
                 parse_mode: "HTML",
                 reply_markup: {
                     inline_keyboard: [[
-                        { text: "🔄 Retry", callback_data: "retry" },
+                        { text: "🔄 Relaunch", callback_data: "relaunch" },
                         { text: "❌ Deny", callback_data: "deny" }
                     ]]
                 }
@@ -452,7 +454,7 @@ send_retry_button() {
 }
 
 # =============================================================================
-# TELEGRAM BLOCKING FLOW (classic v0.3 - used when not in tmux)
+# TELEGRAM BLOCKING FLOW (used when not in tmux)
 # =============================================================================
 
 run_telegram_blocking() {
@@ -462,12 +464,12 @@ run_telegram_blocking() {
     local permission_msg
     permission_msg=$(build_permission_message "$tool_name" "$tool_input")
 
-    local retry_count=0
+    local relaunch_count=0
 
     while true; do
         local offset
         offset=$(get_latest_offset)
-        log "Offset: $offset (attempt $((retry_count + 1)))"
+        log "Offset: $offset (attempt $((relaunch_count + 1)))"
 
         if ! send_telegram_with_buttons "$permission_msg"; then
             log "ERROR: Could not send to Telegram"
@@ -480,23 +482,27 @@ run_telegram_blocking() {
         user_response=$(wait_for_response "$offset" "$PERMISSION_TIMEOUT")
 
         if [ $? -ne 0 ]; then
-            if [ $retry_count -lt $MAX_RETRIES ]; then
-                retry_count=$((retry_count + 1))
+            # Timeout: offer relaunch if retries remain
+            if [ $relaunch_count -lt $MAX_RETRIES ]; then
+                relaunch_count=$((relaunch_count + 1))
                 offset=$(get_latest_offset)
-                send_retry_button "⏰ <b>Timed out</b>. Tap <b>Retry</b> or <b>Deny</b>. <i>($retry_count/$MAX_RETRIES)</i>"
-                local retry_resp
-                retry_resp=$(wait_for_response "$offset" 60)
-                if [ $? -eq 0 ] && [ "$retry_resp" = "retry" ]; then
-                    send_telegram "🔄 Resending..."
+                send_relaunch_button "⏰ <b>Expired</b>. Tap <b>Relaunch</b> to resend or <b>Deny</b>. <i>(${relaunch_count}/${MAX_RETRIES})</i>"
+                log "Relaunch offered ($relaunch_count/$MAX_RETRIES)"
+
+                local relaunch_resp
+                relaunch_resp=$(wait_for_response "$offset" 60)
+                if [ $? -eq 0 ] && [ "$relaunch_resp" = "relaunch" ]; then
+                    send_telegram "🔄 Relaunching..."
+                    log "User chose relaunch"
                     continue
-                elif [ "$retry_resp" = "deny" ]; then
-                    send_telegram "Action denied"
-                    respond "deny" "Denied from retry prompt"
+                elif [ "$relaunch_resp" = "deny" ]; then
+                    send_telegram "❌ Action denied"
+                    respond "deny" "Denied from relaunch prompt"
                     return
                 fi
             fi
-            send_telegram "Timeout. Action denied."
-            respond "deny" "Timeout after retries"
+            send_telegram "⛔ No response. Action denied."
+            respond "deny" "Timeout after $relaunch_count relaunches"
             return
         fi
 
@@ -505,9 +511,9 @@ run_telegram_blocking() {
         decision=$(parse_user_response "$user_response")
 
         case "$decision" in
-            allow) send_telegram "Action allowed"; respond "allow" ;;
-            deny)  send_telegram "Action denied";  respond "deny" "Denied from Telegram" ;;
-            *)     send_telegram "Unknown response. Denied."; respond "deny" "Unknown: $user_response" ;;
+            allow) send_telegram "✅ Action allowed"; respond "allow" ;;
+            deny)  send_telegram "❌ Action denied";  respond "deny" "Denied from Telegram" ;;
+            *)     send_telegram "❓ Unknown response. Denied."; respond "deny" "Unknown: $user_response" ;;
         esac
         return
     done
@@ -605,7 +611,7 @@ start_tmux_escalator() {
 #   5. Dangerous + Telegram + no tmux -> blocking Telegram (v0.3 style)
 # =============================================================================
 
-log "=== Hook started (sensitivity=$SENSITIVITY, telegram=$TELEGRAM_ENABLED, delay=$TELEGRAM_DELAY) ==="
+log "=== Hook started (sensitivity=$SENSITIVITY, telegram=$TELEGRAM_ENABLED) ==="
 
 # Check dependencies
 if ! command -v jq &>/dev/null; then
@@ -662,8 +668,8 @@ fi
 
 # MODE 2: Terminal + Telegram (tmux available)
 if command -v tmux &>/dev/null && tmux list-sessions &>/dev/null 2>&1; then
-    log "Hybrid mode: terminal + Telegram via tmux (delay: ${TELEGRAM_DELAY}s)"
-    start_tmux_escalator "$TOOL_NAME" "$TOOL_INPUT" "$TELEGRAM_DELAY"
+    log "Hybrid mode: terminal + Telegram via tmux"
+    start_tmux_escalator "$TOOL_NAME" "$TOOL_INPUT" "120"
     # Exit with no output -> Claude shows terminal prompt
     log "=== Hook passthrough (terminal prompt + tmux escalator) ==="
     exit 0
