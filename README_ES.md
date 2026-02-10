@@ -293,7 +293,7 @@ Dentro de Claude Code, escribe `/telegram` para un menu interactivo:
 
 ```bash
 # Activar (numero = timeout de Telegram en segundos)
-echo 120 > /tmp/claude_telegram_active
+touch /tmp/claude_telegram_active
 
 # Desactivar
 rm -f /tmp/claude_telegram_active
@@ -312,9 +312,9 @@ cat /tmp/claude_telegram_active 2>/dev/null && echo "ON" || echo "OFF"
 - **Aprobacion por movil** -- Con Telegram activado, toca Permitir o Denegar desde cualquier sitio.
 - **Botones interactivos** -- Un toque. Sin escribir nada.
 - **Contexto completo** -- Ves el comando exacto antes de decidir.
-- **Recordatorios inteligentes** -- El movil vuelve a vibrar si no has respondido.
-- **Reintento tras timeout** -- Se te paso? Aparece un boton de Reintentar.
-- **Proteccion por timeout** -- Sin respuesta tras reintentos? Se deniega automaticamente.
+- **Recordatorios inteligentes** -- El movil vibra a los 60s, 120s y 60s antes de expirar si no has respondido.
+- **Relanzar al expirar** -- Se te paso? Aparece un boton Relanzar para recibir la solicitud de nuevo (hasta 2 veces).
+- **Proteccion por timeout** -- Sin respuesta tras relanzamientos? Se deniega automaticamente.
 - **Respuesta bilingue** -- Escribe "si", "no", "dale", "cancel", "yes", "deny" y mas.
 - **Validacion de seguridad** -- Solo se aceptan respuestas de tu Chat ID autorizado.
 - **Sin infraestructura** -- Sin servidores, sin bases de datos, sin Docker.
@@ -353,7 +353,7 @@ cat /tmp/claude_telegram_active 2>/dev/null && echo "ON" || echo "OFF"
 | `TELEGRAM_CHAT_ID` | Si | -- | Tu ID numerico de Telegram |
 | `TELEGRAM_SENSITIVITY` | No | `smart` | Modo de filtrado: `all`, `smart`, o `critical` |
 | `TELEGRAM_PERMISSION_TIMEOUT` | No | `300` | Segundos de espera en Telegram |
-| `TELEGRAM_MAX_RETRIES` | No | `2` | Reintentos tras timeout de Telegram |
+| `TELEGRAM_MAX_RETRIES` | No | `2` | Relanzamientos tras timeout de Telegram |
 | `TELEGRAM_FALLBACK_ON_ERROR` | No | `allow` | Que hacer si el hook falla: `allow` o `deny` |
 | `TELEGRAM_HOOK_LOG` | No | `/tmp/telegram_claude_hook.log` | Archivo de log (vacio = desactivar) |
 
@@ -383,7 +383,7 @@ El instalador te guia paso a paso:
 
 ### No me llegan mensajes a Telegram
 
-1. **Activaste Telegram?** Esta OFF por defecto. Usa `/telegram` o `echo 120 > /tmp/claude_telegram_active`.
+1. **Activaste Telegram?** Esta OFF por defecto. Usa `/telegram` o `touch /tmp/claude_telegram_active`.
 2. **Le enviaste `/start` al bot?** Los bots no pueden iniciar conversaciones.
 3. **Verifica el token:**
    ```bash
@@ -456,7 +456,7 @@ Si. Telegram funciona en movil, escritorio y web. Aprueba desde donde quieras.
 <details>
 <summary><strong>Que pasa si no respondo?</strong></summary>
 
-Te llegan recordatorios. Si se agota el timeout, aparece un boton Reintentar. Si sigues sin responder tras todos los reintentos, se deniega automaticamente.
+Te llegan recordatorios a los 60s, 120s y 60s antes de expirar. Si se agota el timeout, aparece un boton Relanzar para recibir la solicitud de nuevo (hasta 2 veces). Si sigues sin responder, se deniega automaticamente.
 </details>
 
 <details>

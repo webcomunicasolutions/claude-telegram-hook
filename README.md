@@ -318,7 +318,7 @@ Inside Claude Code, type `/telegram` to get an interactive menu:
 
 ```bash
 # Enable (number = Telegram timeout in seconds for blocking mode)
-echo 120 > /tmp/claude_telegram_active
+touch /tmp/claude_telegram_active
 
 # Disable
 rm -f /tmp/claude_telegram_active
@@ -337,9 +337,9 @@ cat /tmp/claude_telegram_active 2>/dev/null && echo "ON" || echo "OFF"
 - **Phone-based approvals** -- When Telegram is on, tap Allow or Deny from anywhere.
 - **Inline keyboard buttons** -- One tap. No typing.
 - **Rich context** -- See the exact command, file path, or URL before you decide.
-- **Smart reminders** -- Phone buzzes again at halfway and near timeout if you haven't responded.
-- **Retry after timeout** -- Missed the window? A Retry button appears so you can get the request again.
-- **Timeout protection** -- No response after retries? Auto-denied. Claude Code never hangs.
+- **Smart reminders** -- Phone buzzes at 60s, 120s, and 60s before timeout if you haven't responded.
+- **Relaunch on expiry** -- Missed the window? A Relaunch button appears so you can get the request again (up to 2 times).
+- **Timeout protection** -- No response after relaunches? Auto-denied. Claude Code never hangs.
 - **Bilingual fallback** -- Type "yes", "no", "si", "dale", "cancel" and more, in English or Spanish.
 - **Security validation** -- Only responses from your authorized Chat ID are accepted.
 - **Configurable fallback** -- Choose whether errors result in allow or deny.
@@ -400,7 +400,7 @@ export TELEGRAM_SENSITIVITY="smart"
 ```bash
 export TELEGRAM_SENSITIVITY="all"             # Everything needs approval
 export TELEGRAM_PERMISSION_TIMEOUT="120"      # Shorter timeout
-# Then enable Telegram: echo 120 > /tmp/claude_telegram_active
+# Then enable Telegram: touch /tmp/claude_telegram_active
 ```
 
 ---
@@ -429,7 +429,7 @@ The installer will:
 
 ### I don't get any message on Telegram
 
-1. **Did you enable Telegram?** It's OFF by default. Use `/telegram` or `echo 120 > /tmp/claude_telegram_active`.
+1. **Did you enable Telegram?** It's OFF by default. Use `/telegram` or `touch /tmp/claude_telegram_active`.
 2. **Did you send `/start` to your bot?** Bots can't message you until you initiate.
 3. **Is your token correct?**
    ```bash

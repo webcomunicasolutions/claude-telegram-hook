@@ -16,13 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Compound command analysis**: Splits piped/chained commands and flags the chain as dangerous if any sub-command is dangerous
 - **Heredoc/inline script scanning**: Detects dangerous patterns in Python and Node.js inline scripts (os.remove, subprocess, shutil.rmtree, fs.unlinkSync, etc.)
 - **Sensitive path detection**: Blocks auto-approval for writes to `.env`, `.ssh/*`, `credentials`, `/etc/*`, and similar paths
-- **Telegram toggle**: Simple on/off control via flag file (`/tmp/claude_telegram_active`)
-  - Enable: `echo 120 > /tmp/claude_telegram_active` (or use `/telegram` slash command)
+- **Telegram toggle**: Simple ON/OFF via flag file (`/tmp/claude_telegram_active`)
+  - Enable: `touch /tmp/claude_telegram_active` (or use `/telegram` slash command)
   - Disable: `rm -f /tmp/claude_telegram_active` (or use `/telegram` slash command)
-- **`/telegram` slash command** for Claude Code: interactive menu to toggle Telegram on/off from within a session
+- **`/telegram` slash command** for Claude Code: simple toggle ON/OFF from within a session
 - Helper scripts: `telegram-on.sh` and `telegram-off.sh` for quick toggle
+- **Smart reminders**: When waiting for Telegram response, reminders at 60s, 120s, and 60s before timeout
+- **Relaunch on expiry**: When timeout expires, Relaunch/Deny button appears (up to `MAX_RETRIES` times, default 2)
 - **tmux hybrid mode**: When tmux is available and Telegram is enabled, terminal prompt + background Telegram escalation
-- **Blocking Telegram mode**: When tmux is not available and Telegram is enabled, classic blocking Telegram with buttons (v0.3 behavior)
+- **Blocking Telegram mode**: When tmux is not available and Telegram is enabled, blocking Telegram with buttons and smart reminders
 
 ### Changed
 - **Hook event changed from `PermissionRequest` to `PreToolUse`**: fires on every tool use, enabling smart filtering to auto-approve safe operations silently
@@ -50,10 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-02-07
 
 ### Added
-- Smart reminders: phone buzzes again at 60s and 90s if no response
-- Retry mechanism: after timeout, offers a Retry/Deny button instead of immediately denying
+- Smart reminders: phone buzzes again if no response
+- Retry mechanism: after timeout, offers a button instead of immediately denying
 - Configurable max retries via `TELEGRAM_MAX_RETRIES` environment variable (default: 2)
-- Retry counter shown in timeout messages ("Retry 1 of 2")
+- Retry counter shown in timeout messages
 - Documentation: known limitation with multi-agent teams (subagent permissions bypass hooks)
 - Documentation: workaround for pre-approving subagent commands
 
